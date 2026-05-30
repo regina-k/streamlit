@@ -3,3 +3,4 @@ langchain-core
 langchain-openai
 tiktocken
 python-toenv
+bs4

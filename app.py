@@ -76,6 +76,18 @@ def man_to_eok_str(man: int) -> str:
     return format_price_kor(man / 10000)
 
 
+def calc_loan_limit(target_price_man: int) -> int:
+    """가계부채 관리방안 기준 주담대 한도 반환 (만원 단위).
+    ≤15억 → 6억 / 15억 초과~25억 이하 → 4억 / 25억 초과 → 2억
+    """
+    if target_price_man <= 150_000:
+        return 60_000
+    elif target_price_man <= 250_000:
+        return 40_000
+    else:
+        return 20_000
+
+
 # ───────────────────────────────────────────────────────────────────
 # KB부동산 API 헬퍼 함수
 # ───────────────────────────────────────────────────────────────────
@@ -352,7 +364,7 @@ with st.sidebar:
         f"{purchase_date_str} 매수가 (억 원)",
         min_value=0.0,
         max_value=500.0,
-        value=13.0,
+        value=7.4,
         step=0.1,
         format="%.1f",
         help="예) 13.4 입력 → 13억 4,000만 원으로 자동 환산됩니다.",
@@ -514,7 +526,10 @@ st.markdown("---")
 # ══════════════════════════════════════════════════════════════════
 st.subheader("🎯 갈아탈 아파트 선택 (평형·시세 포함)")
 
-target_row = None
+target_row     = None
+loan_limit_man  = 0
+cash_needed_man = 0
+gap_man         = 0
 
 if df_filt.empty:
     st.warning("필터 조건에 맞는 단지가 없습니다. 조건을 조정해 주세요.")
@@ -579,6 +594,34 @@ else:
                 area = target_row.get("공급면적(평)", "-")
                 area_str = f"{area:.2f}".rstrip("0").rstrip(".") if isinstance(area, float) else str(area)
                 st.metric("선택 평형", f"{area_str}평")
+
+            # ── 대출 규제 기반 필요현금 분석 ──────────────────────
+            tgt_price_for_loan = int(target_row.get("KB매매시세(만원)", 0))
+            my_cur_for_loan    = int(st.session_state.get("my_current_price", 0))
+            loan_limit_man     = calc_loan_limit(tgt_price_for_loan)
+            cash_needed_man    = tgt_price_for_loan - loan_limit_man
+            gap_man            = cash_needed_man - my_cur_for_loan
+
+            st.markdown(
+                "**💳 대출 규제 기반 필요현금 분석**  "
+                "<small style='color:#888;'>가계부채 관리방안 적용 — "
+                "15억 이하 6억 / 15~25억 4억 / 25억 초과 2억</small>",
+                unsafe_allow_html=True,
+            )
+            lc1, lc2, lc3 = st.columns(3)
+            with lc1:
+                st.metric("주담대 한도", man_to_eok_str(loan_limit_man))
+            with lc2:
+                st.metric("타겟 매수 필요 현금", man_to_eok_str(cash_needed_man))
+            with lc3:
+                gap_label = man_to_eok_str(abs(gap_man))
+                gap_delta = "현금 부족" if gap_man > 0 else "현금 여유"
+                st.metric(
+                    "최종 추가자금 Gap",
+                    gap_label,
+                    delta=gap_delta,
+                    delta_color="inverse" if gap_man > 0 else "normal",
+                )
 
 st.markdown("---")
 
@@ -645,6 +688,10 @@ if analyze_btn:
             "너는 대한민국 최고의 자산관리사이자 부동산 갈아타기 전문 컨설턴트야. "
             "현업 전문가 입장에서 날카롭고 객관적인 리포트를 작성해 줘. "
             "수치 근거를 토대로 명확한 판단을 내리고, 시장 리스크도 균형 있게 언급해 줘. "
+            "또한 너는 가계부채 관리방안 대출 규제를 완벽히 이해하는 금융 전문가야. "
+            "타겟 아파트 가격에 따라 주담대 한도(15억 이하→6억 / 15~25억→4억 / 25억 초과→2억)가 "
+            "달라지는 규제를 연산 데이터 기반으로 팩트 체크하고, "
+            "섹션 4에서 DSR·신용대출 활용 방안 등 구체적 재무 제언을 반드시 포함해. "
             "리포트는 반드시 마크다운 형식으로 출력해."
         )
 
@@ -667,6 +714,11 @@ if analyze_btn:
 - 준공년월      : {tgt_completion}
 - 선택 공급면적 : {tgt_area}평
 - 현재 KB시세   : {man_to_eok_str(tgt_price)}  ({tgt_price:,}만원)
+
+## 💳 대출 규제 분석 (가계부채 관리방안)
+- 주담대 한도             : {man_to_eok_str(loan_limit_man)}
+- 타겟 매수 필요 현금      : {man_to_eok_str(cash_needed_man)}
+- 최종 추가 자금 Gap       : {man_to_eok_str(abs(gap_man))} {'부족' if gap_man > 0 else '여유'}
 
 ---
 

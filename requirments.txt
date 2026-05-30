@@ -1,0 +1,5 @@
+streamlit
+langchain-core
+langchain-openai
+tiktocken
+python-toenv

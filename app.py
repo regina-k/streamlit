@@ -228,18 +228,23 @@ with st.sidebar:
     st.subheader("🔑 OpenAI API Key")
     env_key = os.getenv("OPENAI_API_KEY", "").strip()
 
-    # [수정1] .env 대신 "Streamlit Cloud의 Secrets(환경변수)" 용어 통일
+    # 항상 text_input을 노출 — env 키가 있어도 수동 입력으로 덮어쓸 수 있음
+    # (env 키가 만료/무효일 때 사용자가 직접 갱신할 수 있도록)
     if env_key:
-        st.success("✅ Secrets 환경변수에서 API Key 자동 로드 완료")
-        api_key = env_key
+        st.info("ℹ️ Secrets 환경변수에서 API Key를 읽었습니다. 아래에서 다른 키로 덮어쓸 수 있습니다.")
     else:
         st.warning("⚠️ Secrets 환경변수에서 Key를 찾지 못했습니다. 직접 입력해 주세요.")
-        api_key = st.text_input(
-            "OpenAI API Key",
-            type="password",
-            placeholder="sk-...",
-            help="OpenAI 대시보드에서 발급한 API Key를 입력하세요.",
-        )
+
+    manual_key = st.text_input(
+        "OpenAI API Key",
+        type="password",
+        placeholder="sk-...  (입력하면 환경변수 값 대신 사용)",
+        help="OpenAI 대시보드에서 발급한 API Key를 입력하세요.",
+        key="api_key_input",
+    ).strip()
+
+    # 수동 입력 우선, 없으면 환경변수 값 사용
+    api_key = manual_key if manual_key else env_key
 
     st.markdown("---")
 

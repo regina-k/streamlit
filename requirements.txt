@@ -2,6 +2,6 @@ streamlit
 langchain-core
 langchain
 langchain-openai
-tiktocken
+tiktoken
 python-toenv
 bs4

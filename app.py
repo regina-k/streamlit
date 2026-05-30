@@ -3,31 +3,32 @@ AI 갈아타기 & 상급지 스카우터
 ────────────────────────────
 KB부동산 라이브 API로 내 아파트를 검색하고,
 로컬 CSV(14~16억 단지 데이터)에서 타겟을 골라
-GPT가 갈아타기 전략 리포트를 생성합니다.
+GPT-4o가 갈아타기 전략 리포트를 생성합니다.
 """
 
 import os
+import re
 import requests
 import pandas as pd
 import streamlit as st
 
-# ── python-dotenv 임포트 (없으면 무시) ─────────────────────────────
+# ── python-dotenv (로컬 개발 편의용, 배포 환경에서는 Secrets 환경변수 사용) ─
 try:
     from dotenv import load_dotenv
     load_dotenv()
 except ImportError:
     pass
 
-# ── OpenAI 라이브러리 임포트 ────────────────────────────────────────
+# ── OpenAI 라이브러리 임포트 ────────────────────────────────────────────
 try:
     from openai import OpenAI
     OPENAI_AVAILABLE = True
 except ImportError:
     OPENAI_AVAILABLE = False
 
-# ───────────────────────────────────────────────────────────────────
+# ═══════════════════════════════════════════════════════════════════════
 # 상수
-# ───────────────────────────────────────────────────────────────────
+# ═══════════════════════════════════════════════════════════════════════
 KB_BASE_URL = "https://api.kbland.kr"
 CSV_FILE    = "kb_data.csv"
 
@@ -42,9 +43,7 @@ KB_HEADERS = {
     "Accept-Language": "ko-KR,ko;q=0.9",
 }
 
-# ───────────────────────────────────────────────────────────────────
-# 페이지 설정 (최상단 1회 호출)
-# ───────────────────────────────────────────────────────────────────
+# ── 페이지 설정 (최상단 1회 호출) ──────────────────────────────────────
 st.set_page_config(
     page_title="AI 갈아타기 & 상급지 스카우터",
     page_icon="🏙️",
@@ -52,12 +51,12 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# ───────────────────────────────────────────────────────────────────
+# ═══════════════════════════════════════════════════════════════════════
 # 헬퍼: 금액 한글 표시
-# ───────────────────────────────────────────────────────────────────
+# ═══════════════════════════════════════════════════════════════════════
 
 def format_price_kor(eok: float) -> str:
-    """13.4 → '13억 4,000만 원' 형태로 변환 (억 단위 float 입력)."""
+    """13.4 → '13억 4,000만 원' (억 단위 float 입력)."""
     if eok <= 0:
         return "0원"
     man_total = round(eok * 10000)
@@ -72,7 +71,7 @@ def format_price_kor(eok: float) -> str:
 
 
 def man_to_eok_str(man: int) -> str:
-    """134000 → '13억 4,000만 원' 형태로 변환 (만원 단위 int 입력)."""
+    """134000 → '13억 4,000만 원' (만원 단위 int 입력)."""
     return format_price_kor(man / 10000)
 
 
@@ -88,15 +87,13 @@ def calc_loan_limit(target_price_man: int) -> int:
         return 20_000
 
 
-# ───────────────────────────────────────────────────────────────────
+# ═══════════════════════════════════════════════════════════════════════
 # KB부동산 API 헬퍼 함수
-# ───────────────────────────────────────────────────────────────────
+# ═══════════════════════════════════════════════════════════════════════
 
 def fetch_search_suggestions(keyword: str) -> list:
-    """
-    자동완성 API: 키워드로 단지 후보 목록 반환.
+    """자동완성 API: 키워드로 단지 후보 목록 반환.
     엔드포인트: /land-complex/serch/autoKywrSerch
-    반환: [{"label": "단지명 (주소)", "textTemp": "(주소)단지명"}, ...]
     """
     url    = f"{KB_BASE_URL}/land-complex/serch/autoKywrSerch"
     params = {
@@ -129,8 +126,7 @@ def fetch_search_suggestions(keyword: str) -> list:
 
 
 def fetch_complex_id(text_temp: str) -> dict:
-    """
-    통합검색 API: textTemp로 단지 기본정보(COMPLEX_NO 포함) 반환.
+    """통합검색 API: textTemp로 단지 기본정보(COMPLEX_NO 포함) 반환.
     엔드포인트: /land-complex/serch/intgraSerch
     """
     url    = f"{KB_BASE_URL}/land-complex/serch/intgraSerch"
@@ -153,8 +149,8 @@ def fetch_complex_id(text_temp: str) -> dict:
         )
         if not hscm:
             return {}
-        item = hscm[0]
-        raw_comp = str(item.get("MVIHS_DATE", ""))
+        item       = hscm[0]
+        raw_comp   = str(item.get("MVIHS_DATE", ""))
         completion = (
             f"{raw_comp[:4]}.{raw_comp[4:]}" if len(raw_comp) >= 6 else raw_comp
         )
@@ -171,8 +167,7 @@ def fetch_complex_id(text_temp: str) -> dict:
 
 
 def fetch_complex_price(complex_id: str) -> list:
-    """
-    단지 시세정보 API: 면적별 KB매매시세 리스트 반환.
+    """단지 시세정보 API: 면적별 KB매매시세 리스트 반환.
     엔드포인트: /land-complex/complex/mpriByType
     """
     url    = f"{KB_BASE_URL}/land-complex/complex/mpriByType"
@@ -186,10 +181,10 @@ def fetch_complex_price(complex_id: str) -> list:
         return []
 
 
-# ───────────────────────────────────────────────────────────────────
+# ═══════════════════════════════════════════════════════════════════════
 # 캐시 데이터 로더: CSV → DataFrame
 # ── get_unique_complexes() 제거: 다중 평형 선택을 위해 df_all 직접 사용
-# ───────────────────────────────────────────────────────────────────
+# ═══════════════════════════════════════════════════════════════════════
 
 @st.cache_data(show_spinner="CSV 데이터를 불러오는 중...")
 def load_apartment_data() -> pd.DataFrame:
@@ -221,23 +216,24 @@ def load_apartment_data() -> pd.DataFrame:
     return df
 
 
-# ───────────────────────────────────────────────────────────────────
+# ═══════════════════════════════════════════════════════════════════════
 # ░░  사이드바 UI  ░░
-# ───────────────────────────────────────────────────────────────────
+# ═══════════════════════════════════════════════════════════════════════
 
 with st.sidebar:
     st.title("🏠 내 집 정보 입력")
     st.markdown("---")
 
-    # ── OpenAI API Key ──────────────────────────────────────────
+    # ── OpenAI API Key ──────────────────────────────────────────────
     st.subheader("🔑 OpenAI API Key")
     env_key = os.getenv("OPENAI_API_KEY", "").strip()
 
+    # [수정1] .env 대신 "Streamlit Cloud의 Secrets(환경변수)" 용어 통일
     if env_key:
-        st.success("✅ .env에서 API Key 자동 로드 완료")
+        st.success("✅ Secrets 환경변수에서 API Key 자동 로드 완료")
         api_key = env_key
     else:
-        st.warning("⚠️ .env에서 Key를 찾지 못했습니다. 직접 입력해 주세요.")
+        st.warning("⚠️ Secrets 환경변수에서 Key를 찾지 못했습니다. 직접 입력해 주세요.")
         api_key = st.text_input(
             "OpenAI API Key",
             type="password",
@@ -247,9 +243,9 @@ with st.sidebar:
 
     st.markdown("---")
 
-    # ══════════════════════════════════════════════════════════════
+    # ══════════════════════════════════════════════════════════════════
     # STEP 1 ▸ 아파트명 통합검색 (자동완성 2단계 API)
-    # ══════════════════════════════════════════════════════════════
+    # ══════════════════════════════════════════════════════════════════
     st.subheader("📍 STEP 1 — 내 아파트 검색")
 
     search_keyword = st.text_input(
@@ -301,7 +297,7 @@ with st.sidebar:
     elif search_keyword.strip():
         st.warning("검색 결과가 없습니다. 다른 키워드로 검색해 보세요.")
 
-    # ── 확정된 내 집 정보 카드 ─────────────────────────────────
+    # ── 확정된 내 집 정보 카드 ──────────────────────────────────────
     if st.session_state.get("my_name"):
         with st.container(border=True):
             st.markdown(f"**{st.session_state['my_name']}**")
@@ -313,7 +309,7 @@ with st.sidebar:
             with c2:
                 st.metric("입주년월", st.session_state.get("my_completion", "-"))
 
-            # 면적별 시세 선택
+            # 면적별 시세 선택 (KB API 응답 기준)
             prices = st.session_state.get("my_prices", [])
             if prices:
                 price_map = {}
@@ -332,12 +328,12 @@ with st.sidebar:
 
     st.markdown("---")
 
-    # ══════════════════════════════════════════════════════════════
+    # ══════════════════════════════════════════════════════════════════
     # STEP 1 계속 ▸ 매수 시점(연·월) + 매수가 (억 단위 소수점 입력)
-    # ══════════════════════════════════════════════════════════════
+    # ══════════════════════════════════════════════════════════════════
     st.subheader("💰 매수 시점 및 매수가 입력")
 
-    # ── 연도·월 selectbox (기본값: 2023년 4월) ──────────────────
+    # ── 연도·월 selectbox (기본값: 2023년 4월) ──────────────────────
     p_col1, p_col2 = st.columns(2)
     with p_col1:
         purchase_year = st.selectbox(
@@ -359,7 +355,7 @@ with st.sidebar:
     # 화면 표시용 날짜 문자열 (동적으로 변경)
     purchase_date_str = f"{purchase_year}년 {purchase_month}월"
 
-    # ── 매수가 입력 ──────────────────────────────────────────────
+    # ── 매수가 입력 ──────────────────────────────────────────────────
     purchase_eok = st.number_input(
         f"{purchase_date_str} 매수가 (억 원)",
         min_value=0.0,
@@ -379,15 +375,13 @@ with st.sidebar:
         )
 
 
-# ───────────────────────────────────────────────────────────────────
+# ═══════════════════════════════════════════════════════════════════════
 # ░░  메인 화면  ░░
-# ───────────────────────────────────────────────────────────────────
+# ═══════════════════════════════════════════════════════════════════════
 
 st.title("🏙️ AI 갈아타기 & 상급지 스카우터")
 
-# ══════════════════════════════════════════════════════════════════
-# [요구사항 1] 사용 가이드 섹션 — 최상단에 3단계 흐름 안내
-# ══════════════════════════════════════════════════════════════════
+# ── 서비스 이용 가이드 ──────────────────────────────────────────────
 with st.expander("📖 서비스 이용 가이드 (클릭하여 펼치기/접기)", expanded=True):
     g1, g2, g3 = st.columns(3)
 
@@ -411,8 +405,8 @@ with st.expander("📖 서비스 이용 가이드 (클릭하여 펼치기/접기
                         padding:14px 16px;border-radius:6px;min-height:130px;">
             <b>② STEP 2 · 메인 화면 대시보드</b><br><br>
             아래 <b>서울·수도권 14~16억 아파트 목록</b>에서<br>
-            갈아타기 원하는 타겟 아파트를 필터링 후<br>
-            평형과 시세를 확인하여 최종 선택합니다.
+            원하는 타겟 아파트 행을 <b>마우스로 클릭</b>하면<br>
+            즉시 자금 분석이 활성화됩니다.
             </div>
             """,
             unsafe_allow_html=True,
@@ -432,18 +426,18 @@ with st.expander("📖 서비스 이용 가이드 (클릭하여 펼치기/접기
             unsafe_allow_html=True,
         )
 
-    # [요구사항 2] 데이터 정적 갱신 주기 안내 캡션
+    # 데이터 정적 갱신 주기 안내 캡션 (매주 금요일 갱신)
     st.caption(
         "※ 본 부동산 시세 정보는 매주 금요일에 갱신되는 정적 데이터셋을 기반으로 합니다."
     )
 
 st.markdown("---")
 
-# CSV 로드 (모든 평형 행 포함)
+# ── CSV 로드 (모든 평형 행 포함) ────────────────────────────────────
 df_all = load_apartment_data()
 
-# ── 대시보드 요약 메트릭 ────────────────────────────────────────
-# 단지 수: 단지ID 기준 고유값 / 평균·최저·최고 시세: 단지ID별 중간 시세로 계산
+# ── 대시보드 요약 메트릭 ─────────────────────────────────────────────
+# 단지 수: 단지ID 기준 고유값 / 시세 통계: 단지별 대표 1행으로 계산
 df_dedup = df_all.dropna(subset=["KB매매시세(만원)"]).drop_duplicates(subset="단지ID")
 
 m1, m2, m3, m4 = st.columns(4)
@@ -458,7 +452,7 @@ with m4:
 
 st.markdown("---")
 
-# ── 필터 섹션 ───────────────────────────────────────────────────
+# ── 필터 섹션 ─────────────────────────────────────────────────────────
 st.subheader("🔍 타겟 단지 검색 · 필터")
 
 fc1, fc2, fc3 = st.columns([1, 1, 2])
@@ -480,7 +474,7 @@ with fc2:
 with fc3:
     keyword = st.text_input("아파트명 검색 (타겟용)", placeholder="예: 힐스테이트")
 
-# ── 필터 적용 (df_all 기반 → 모든 평형 행 포함) ─────────────────
+# ── 필터 적용 (df_all 기반 → 모든 평형 행 포함) ─────────────────────
 df_filt = df_all.copy()
 if sel_region != "전체":
     df_filt = df_filt[df_filt["지역"] == sel_region]
@@ -489,12 +483,15 @@ if sel_dong != "전체" and "동" in df_filt.columns:
 if keyword.strip():
     df_filt = df_filt[df_filt["아파트명"].str.contains(keyword.strip(), na=False)]
 
+# reset_index 필수: on_select 이벤트의 행 인덱스가 0-based 순번이어야 함
 df_filt = df_filt.reset_index(drop=True)
 
-# ── 데이터프레임 출력 (모든 평형 행 노출) ──────────────────────
+# ── 검색 결과 요약 + 행 클릭 안내 ──────────────────────────────────
 st.markdown(
     f"**검색 결과:** {df_filt['단지ID'].nunique():,}개 단지 "
-    f"/ 총 {len(df_filt):,}개 평형 유형"
+    f"/ 총 {len(df_filt):,}개 평형 유형 &nbsp;&nbsp;"
+    f"<span style='color:#6B7280;font-size:0.85em;'>👆 원하는 행을 클릭하면 즉시 타겟으로 선택됩니다</span>",
+    unsafe_allow_html=True,
 )
 
 disp_cols = [c for c in [
@@ -503,8 +500,14 @@ disp_cols = [c for c in [
     "도로명주소", "단지ID",
 ] if c in df_filt.columns]
 
-st.dataframe(
+# ─────────────────────────────────────────────────────────────────────
+# [수정2] on_select="rerun": 행 클릭 시 즉시 리런 → selectbox 불필요
+#         selection_mode="single-row": 단일 행만 선택 허용
+# ─────────────────────────────────────────────────────────────────────
+event = st.dataframe(
     df_filt[disp_cols],
+    on_select="rerun",
+    selection_mode="single-row",
     use_container_width=True,
     height=380,
     column_config={
@@ -518,117 +521,145 @@ st.dataframe(
 
 st.markdown("---")
 
-# ══════════════════════════════════════════════════════════════════
-# [요구사항 3] 타겟 아파트 선택 — 아파트명 + 평형 + KB시세 조합 라벨
-# ── 핵심 버그 수정: 단지ID 기준 1개 행으로 압축하던 get_unique_complexes()
-#    제거 → df_filt(모든 평형 행)에서 (단지ID + 공급면적(평)) 기준 dedup
-#    → "현대홈타운 (34.12평) - 15억 5,000만 원" 형태의 고유 라벨 생성
-# ══════════════════════════════════════════════════════════════════
-st.subheader("🎯 갈아탈 아파트 선택 (평형·시세 포함)")
-
-target_row     = None
+# ═══════════════════════════════════════════════════════════════════════
+# 선택된 행 → target_row 매핑 + 대출 규제 연산
+# ═══════════════════════════════════════════════════════════════════════
+target_row      = None
 loan_limit_man  = 0
 cash_needed_man = 0
 gap_man         = 0
 
-if df_filt.empty:
-    st.warning("필터 조건에 맞는 단지가 없습니다. 조건을 조정해 주세요.")
-else:
-    # (단지ID + 공급면적(평)) 기준으로 완전 중복 행만 제거
-    # → 같은 단지라도 평형이 다르면 별도 옵션으로 노출
-    df_select = (
-        df_filt
-        .dropna(subset=["KB매매시세(만원)", "공급면적(평)"])
-        .drop_duplicates(subset=["단지ID", "공급면적(평)"])
-        .copy()
+# event.selection.rows: 클릭된 행의 0-based 인덱스 리스트
+selected_indices = event.selection.rows
+
+if selected_indices:
+    idx        = selected_indices[0]
+    target_row = df_filt.iloc[idx]  # df_filt는 reset_index 완료 상태
+
+    # ── 대출 규제 3단계 연산 ──────────────────────────────────────
+    tgt_price_for_loan = int(target_row.get("KB매매시세(만원)", 0))
+    my_cur_for_loan    = int(st.session_state.get("my_current_price", 0))
+    loan_limit_man     = calc_loan_limit(tgt_price_for_loan)
+    cash_needed_man    = tgt_price_for_loan - loan_limit_man
+    gap_man            = cash_needed_man - my_cur_for_loan
+
+    # ── 선택된 타겟 정보 카드 ─────────────────────────────────────
+    area     = target_row.get("공급면적(평)", "-")
+    area_str = (
+        f"{area:.2f}".rstrip("0").rstrip(".")
+        if isinstance(area, float) else str(area)
     )
+    pv = target_row.get("KB매매시세(만원)", 0)
 
-    def make_select_label(row) -> str:
-        """선택박스 표시 텍스트: '아파트명 (34.12평) - 15억 5,000만 원'"""
-        name  = row.get("아파트명", "")
-        area  = row.get("공급면적(평)", "?")
-        price = int(row.get("KB매매시세(만원)", 0)) if pd.notna(row.get("KB매매시세(만원)", 0)) else 0
-        # 평형 숫자: 소수점 이하가 0이면 정수로 표시
-        area_str = f"{area:.2f}".rstrip("0").rstrip(".")
-        return f"{name} ({area_str}평) - {man_to_eok_str(price)}"
+    with st.container(border=True):
+        st.markdown("**✅ 선택된 타겟 아파트 정보**")
 
-    df_select["__label__"] = df_select.apply(make_select_label, axis=1)
+        # 기본 스펙 5컬럼
+        tc1, tc2, tc3, tc4, tc5 = st.columns(5)
+        with tc1:
+            st.metric("단지명",    target_row.get("아파트명", "-"))
+        with tc2:
+            st.metric("KB시세",    man_to_eok_str(int(pv)) if pd.notna(pv) else "-")
+        with tc3:
+            st.metric("세대수",    f"{int(target_row.get('세대수', 0)):,}세대")
+        with tc4:
+            st.metric("준공년월",  str(target_row.get("준공년월", "-")))
+        with tc5:
+            st.metric("선택 평형", f"{area_str}평")
 
-    # 라벨 중복 방지: 동일 라벨이 생기면 행 번호 suffix 추가
-    seen: dict = {}
-    unique_labels = []
-    for lbl in df_select["__label__"]:
-        if lbl in seen:
-            seen[lbl] += 1
-            unique_labels.append(f"{lbl} #{seen[lbl]}")
-        else:
-            seen[lbl] = 0
-            unique_labels.append(lbl)
-    df_select["__label__"] = unique_labels
-
-    sel_label = st.selectbox(
-        "갈아탈 아파트를 선택하세요 (아파트명 · 평형 · KB시세):",
-        options=df_select["__label__"].tolist(),
-        help="동일 단지라도 평형별로 구분되어 표시됩니다. 원하는 평형과 시세를 선택하세요.",
-    )
-
-    # 선택된 라벨로 정확한 행 추출
-    sel_rows = df_select[df_select["__label__"] == sel_label]
-    if not sel_rows.empty:
-        target_row = sel_rows.iloc[0]
-
-        # 선택 정보 카드
-        with st.container(border=True):
-            st.markdown("**✅ 선택된 타겟 아파트 정보**")
-            tc1, tc2, tc3, tc4, tc5 = st.columns(5)
-            with tc1:
-                st.metric("단지명",    target_row.get("아파트명", "-"))
-            with tc2:
-                pv = target_row.get("KB매매시세(만원)", 0)
-                st.metric("KB시세",    man_to_eok_str(int(pv)) if pd.notna(pv) else "-")
-            with tc3:
-                st.metric("세대수",    f"{int(target_row.get('세대수', 0)):,}세대")
-            with tc4:
-                st.metric("준공년월",  str(target_row.get("준공년월", "-")))
-            with tc5:
-                area = target_row.get("공급면적(평)", "-")
-                area_str = f"{area:.2f}".rstrip("0").rstrip(".") if isinstance(area, float) else str(area)
-                st.metric("선택 평형", f"{area_str}평")
-
-            # ── 대출 규제 기반 필요현금 분석 ──────────────────────
-            tgt_price_for_loan = int(target_row.get("KB매매시세(만원)", 0))
-            my_cur_for_loan    = int(st.session_state.get("my_current_price", 0))
-            loan_limit_man     = calc_loan_limit(tgt_price_for_loan)
-            cash_needed_man    = tgt_price_for_loan - loan_limit_man
-            gap_man            = cash_needed_man - my_cur_for_loan
-
-            st.markdown(
-                "**💳 대출 규제 기반 필요현금 분석**  "
-                "<small style='color:#888;'>가계부채 관리방안 적용 — "
-                "15억 이하 6억 / 15~25억 4억 / 25억 초과 2억</small>",
-                unsafe_allow_html=True,
+        # ── 대출 규제 기반 필요현금 분석 ─────────────────────────
+        st.markdown(
+            "**💳 대출 규제 기반 필요현금 분석**  "
+            "<small style='color:#888;'>가계부채 관리방안 적용 — "
+            "15억 이하 6억 / 15~25억 4억 / 25억 초과 2억</small>",
+            unsafe_allow_html=True,
+        )
+        lc1, lc2, lc3 = st.columns(3)
+        with lc1:
+            st.metric("주담대 한도", man_to_eok_str(loan_limit_man))
+        with lc2:
+            st.metric("타겟 매수 필요 현금", man_to_eok_str(cash_needed_man))
+        with lc3:
+            gap_label = man_to_eok_str(abs(gap_man))
+            gap_delta = "현금 부족" if gap_man > 0 else "현금 여유"
+            st.metric(
+                "최종 추가자금 Gap",
+                gap_label,
+                delta=gap_delta,
+                delta_color="inverse" if gap_man > 0 else "normal",
             )
-            lc1, lc2, lc3 = st.columns(3)
-            with lc1:
-                st.metric("주담대 한도", man_to_eok_str(loan_limit_man))
-            with lc2:
-                st.metric("타겟 매수 필요 현금", man_to_eok_str(cash_needed_man))
-            with lc3:
-                gap_label = man_to_eok_str(abs(gap_man))
-                gap_delta = "현금 부족" if gap_man > 0 else "현금 여유"
-                st.metric(
-                    "최종 추가자금 Gap",
-                    gap_label,
-                    delta=gap_delta,
-                    delta_color="inverse" if gap_man > 0 else "normal",
-                )
+
+else:
+    # [수정5] Empty State: 타겟 미선택 시 안내 문구 (에러 없이 깔끔하게 처리)
+    st.info("💡 타겟 아파트를 표에서 선택하면 상세 자금 분석이 활성화됩니다.")
 
 st.markdown("---")
 
-# ───────────────────────────────────────────────────────────────────
-# AI 분석 버튼
-# ───────────────────────────────────────────────────────────────────
+# ═══════════════════════════════════════════════════════════════════════
+# [수정3] 체급 비교 대시보드 — 내 집 vs 타겟 나란히 비교
+#         내 집 정보 + 타겟 선택이 모두 완료된 경우에만 렌더링
+# ═══════════════════════════════════════════════════════════════════════
+my_cur_price_ss = int(st.session_state.get("my_current_price", 0))
 
+if st.session_state.get("my_name") and target_row is not None:
+    st.subheader("⚖️ 체급 비교 대시보드")
+
+    left_col, right_col = st.columns(2)
+
+    with left_col:
+        with st.container(border=True):
+            st.markdown("##### 🏠 내 집 현재 스펙")
+
+            # 매수 이후 수익률 사전 계산
+            if my_purchase_price_man > 0 and my_cur_price_ss > 0:
+                gain_pct_dash = (
+                    (my_cur_price_ss - my_purchase_price_man)
+                    / my_purchase_price_man * 100
+                )
+            else:
+                gain_pct_dash = 0.0
+
+            st.metric("단지명",     st.session_state.get("my_name", "-"))
+            st.metric(
+                "현재 KB매매시세",
+                man_to_eok_str(my_cur_price_ss),
+                delta=f"{gain_pct_dash:+.1f}% ({purchase_date_str} 대비)",
+            )
+            st.metric(
+                f"{purchase_date_str} 매수가",
+                format_price_kor(purchase_eok),
+            )
+            st.metric("입주년월",   st.session_state.get("my_completion", "-"))
+
+    with right_col:
+        with st.container(border=True):
+            st.markdown("##### 🎯 타겟 아파트 스펙")
+
+            tgt_pv       = target_row.get("KB매매시세(만원)", 0)
+            tgt_area_d   = target_row.get("공급면적(평)", "-")
+            tgt_area_str = (
+                f"{tgt_area_d:.2f}".rstrip("0").rstrip(".")
+                if isinstance(tgt_area_d, float) else str(tgt_area_d)
+            )
+            # 내 집 대비 시세 차액 계산
+            price_diff = int(tgt_pv) - my_cur_price_ss
+
+            st.metric("단지명",  target_row.get("아파트명", "-"))
+            st.metric(
+                "현재 KB매매시세",
+                man_to_eok_str(int(tgt_pv)),
+                delta=(
+                    f"내 집 대비 {man_to_eok_str(abs(price_diff))} "
+                    f"{'높음' if price_diff > 0 else '낮음'}"
+                ),
+                delta_color="inverse" if price_diff > 0 else "normal",
+            )
+            st.metric("선택 평형", f"{tgt_area_str}평")
+            st.metric("준공년월",  str(target_row.get("준공년월", "-")))
+
+    st.markdown("---")
+
+# ── AI 분석 버튼 ────────────────────────────────────────────────────
 analyze_btn = st.button(
     "🤖 AI 갈아타기 전략 분석",
     type="primary",
@@ -638,7 +669,7 @@ analyze_btn = st.button(
 
 if analyze_btn:
 
-    # ── 사전 유효성 검사 ────────────────────────────────────────
+    # ── 사전 유효성 검사 ──────────────────────────────────────────
     errors = []
     if not OPENAI_AVAILABLE:
         errors.append("`openai` 패키지가 없습니다. `pip install openai`를 실행해 주세요.")
@@ -649,14 +680,14 @@ if analyze_btn:
     if my_purchase_price_man <= 0:
         errors.append(f"{purchase_date_str} 매수가를 입력해 주세요. (사이드바)")
     if target_row is None:
-        errors.append("갈아탈 아파트를 선택해 주세요. (STEP 2)")
+        errors.append("갈아탈 아파트를 표에서 클릭하여 선택해 주세요.")
 
     for err in errors:
         st.error(f"❌ {err}")
 
     if not errors:
 
-        # ── 내 집 데이터 ─────────────────────────────────────────
+        # ── 내 집 데이터 ───────────────────────────────────────────
         my_name       = st.session_state.get("my_name", "알 수 없음")
         my_units      = st.session_state.get("my_units", "알 수 없음")
         my_completion = st.session_state.get("my_completion", "알 수 없음")
@@ -669,7 +700,7 @@ if analyze_btn:
         else:
             gain_pct, gain_amt = 0.0, 0
 
-        # ── 타겟 아파트 데이터 ───────────────────────────────────
+        # ── 타겟 아파트 데이터 ─────────────────────────────────────
         tgt_name       = target_row.get("아파트명", "알 수 없음")
         tgt_region     = target_row.get("지역", "")
         tgt_dong       = target_row.get("동", "")
@@ -680,10 +711,10 @@ if analyze_btn:
             f"{tgt_area_raw:.2f}".rstrip("0").rstrip(".")
             if isinstance(tgt_area_raw, float) else str(tgt_area_raw)
         )
-        tgt_price      = int(target_row.get("KB매매시세(만원)", 0))
-        tgt_address    = target_row.get("도로명주소", f"{tgt_region} {tgt_dong}".strip())
+        tgt_price   = int(target_row.get("KB매매시세(만원)", 0))
+        tgt_address = target_row.get("도로명주소", f"{tgt_region} {tgt_dong}".strip())
 
-        # ── GPT 프롬프트 ────────────────────────────────────────
+        # ── GPT 시스템 프롬프트 (가계부채 전문가 페르소나 포함) ───
         system_prompt = (
             "너는 대한민국 최고의 자산관리사이자 부동산 갈아타기 전문 컨설턴트야. "
             "현업 전문가 입장에서 날카롭고 객관적인 리포트를 작성해 줘. "
@@ -728,16 +759,16 @@ if analyze_btn:
 (연식, 세대수, 입지 관점에서 두 단지를 객관적으로 비교)
 
 ## 2. 동기간 자산 상승률 비교 패러다임
-(내 집의 23년 이후 상승률과 타겟 아파트 시세 수준을 비교하며 향후 상승 잠재력 분석)
+(내 집의 {purchase_date_str} 이후 상승률과 타겟 아파트 시세 수준을 비교하며 향후 상승 잠재력 분석)
 
 ## 3. 갈아타기 시 실거주·환금성 이점 분석
 (실거주—학군·편의시설·연식 등—과 환금성—세대수·유동성—의 이점 및 리스크 분석)
 
 ## 4. 최종 이동 타이밍 및 재무 제언
-(현시점 갈아타기 권장 여부에 대한 명확한 판단, 타이밍 조언, 추가 자금 마련 방안 등 구체적 제언)
+(현시점 갈아타기 권장 여부에 대한 명확한 판단, 타이밍 조언, DSR·신용대출 활용 방안 등 구체적 재무 제언 반드시 포함)
 """
 
-        # ── GPT API 호출 ────────────────────────────────────────
+        # ── GPT API 호출 ───────────────────────────────────────────
         try:
             client_gpt = OpenAI(api_key=api_key)
 
@@ -754,7 +785,7 @@ if analyze_btn:
 
             report_text = response.choices[0].message.content
 
-            # ── 리포트 렌더링 ────────────────────────────────────
+            # ── 리포트 헤더 요약 메트릭 3종 ───────────────────────
             st.markdown("---")
             st.markdown("## 📊 AI 갈아타기 전략 리포트")
 
@@ -779,7 +810,39 @@ if analyze_btn:
             st.markdown("---")
             st.markdown(f"**분석 대상:** {my_name}  →  {tgt_name} ({tgt_area}평)")
             st.markdown("---")
-            st.markdown(report_text)
+
+            # ────────────────────────────────────────────────────────
+            # [수정4] st.tabs — GPT 응답을 ## 1. / ## 2. / ## 3. / ## 4. 기준으로
+            #         분할하여 탭별 렌더링 (긴 텍스트 벽 방지)
+            # ────────────────────────────────────────────────────────
+            # 줄 시작 기준 ## N. 앞에서 분할 (lookahead 사용)
+            raw_parts = re.split(r'\n(?=##\s*[1-4]\.)', "\n" + report_text.strip())
+
+            # 섹션 번호 → 본문 딕셔너리 구성
+            section_map: dict = {}
+            for part in raw_parts:
+                part = part.strip()
+                if not part:
+                    continue
+                m = re.match(r'^##\s*([1-4])\.', part)
+                if m:
+                    section_map[int(m.group(1))] = part
+
+            tab1, tab2, tab3, tab4 = st.tabs([
+                "📊 자산 가치 비교",
+                "📈 상승률 패러다임",
+                "🏫 실거주·환금성",
+                "💡 재무 & 대출 제언",
+            ])
+
+            with tab1:
+                st.markdown(section_map.get(1, "_섹션 1 내용을 파싱하지 못했습니다._"))
+            with tab2:
+                st.markdown(section_map.get(2, "_섹션 2 내용을 파싱하지 못했습니다._"))
+            with tab3:
+                st.markdown(section_map.get(3, "_섹션 3 내용을 파싱하지 못했습니다._"))
+            with tab4:
+                st.markdown(section_map.get(4, "_섹션 4 내용을 파싱하지 못했습니다._"))
 
             st.info(
                 "⚠️ 본 리포트는 AI가 생성한 참고용 분석이며, "
@@ -789,8 +852,6 @@ if analyze_btn:
         except Exception as e:
             st.error(f"❌ GPT API 호출 오류: {e}")
 
-# ───────────────────────────────────────────────────────────────────
-# 푸터
-# ───────────────────────────────────────────────────────────────────
+# ── 푸터 ────────────────────────────────────────────────────────────
 st.markdown("---")
 st.caption("데이터 출처: KB부동산  |  AI 분석 엔진: OpenAI GPT-4o")

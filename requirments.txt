@@ -1,7 +1,0 @@
-streamlit
-langchain-core
-langchain
-langchain-openai
-tiktocken
-python-toenv
-bs4

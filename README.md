@@ -32,15 +32,15 @@ project_root/
 │
 ├── modules/
 │   ├── kb_api.py             # KB부동산 API 호출 (김혜민)
-│   ├── data_loader.py        # CSV 로드·필터링 (김혜민)
+│   ├── data_loader.py        # CSV 로드·필터링 (장원준) ← ML 입력 형태 설계
 │   ├── utils.py              # 금액 포맷팅 공통 유틸
 │   ├── loan_calculator.py    # LTV/DSR/대출한도 계산
 │   ├── ml_predictor.py       # 아파트 상승률 ML 예측 (장원준) ← STUB
 │   └── rag_advisor.py        # RAG/LLM 어드바이저 (김동하) ← STUB
 │
 ├── data/
-│   ├── kb_data.csv           # KB 단지 데이터
-│   └── ml_apt_index_sigungu.csv
+│   ├── kb_apt_seoul_full.csv      # KB 단지·시세 데이터 (normalize_to_csv.py 출력)
+│   └── kb_timeseries_seoul.csv    # KB 월별 시세 시계열 (collect_kb_timeseries.py 출력)
 │
 ├── models/                   # 학습된 ML 모델 (장원준)
 └── vector_store/             # RAG 벡터 DB (김동하)
@@ -52,8 +52,8 @@ project_root/
 
 | 이름 | 파일 | TODO |
 |---|---|---|
-| **김혜민** | `modules/kb_api.py` | `fetch_*` 함수 3개 구현 (API 호출 로직) |
-| **김혜민** | `modules/data_loader.py` | `load_kb_apt_data`, `load_ml_timeseries`, `filter_apartments` 구현 |
+| **김혜민** | `modules/kb_api.py` | `fetch_search_suggestions`, `fetch_complex_id`, `fetch_complex_price`, `fetch_complex_timeseries` 구현 완료 |
+| **장원준** | `modules/data_loader.py` | `load_kb_apt_data`, `load_ml_timeseries`, `filter_apartments` — ML 모델이 요구하는 형태로 자유롭게 설계 |
 | **장원준** | `modules/ml_predictor.py` | `predict_price_growth` 내부를 LightGBM 실제 예측으로 교체, `models/` 에 모델 저장 |
 | **김동하** | `modules/rag_advisor.py` | `_stub_gpt_response` → `get_loan_advice` RAG 파이프라인으로 교체, `vector_store/` 구성 |
 | **이동욱** | `app.py` | Tab 1~3 UI 구현, 각 모듈 함수 호출 연결 (파일 내 TODO 주석 참고) |
@@ -61,6 +61,18 @@ project_root/
 
 > **함수 시그니처(입출력 타입) 변경 금지** — 특히 `predict_price_growth`, `get_loan_advice`.
 > 내부 구현만 교체할 것.
+
+---
+
+## 데이터 파일 안내
+
+| 파일 | 생성 스크립트 | 주요 컬럼 |
+|---|---|---|
+| `kb_apt_seoul_full.csv` | `collect_kb_data.py` + `normalize_to_csv.py` | 단지ID, 단지명, 시군구, 세대수, 준공년월, 공급면적(평), KB매매시세(만원) 등 |
+| `kb_timeseries_seoul.csv` | `collect_kb_timeseries.py` | 단지ID, 면적일련번호, 기준년월, KB매매시세(만원), KB전세시세(만원) 등 월별 시세 |
+
+`data_loader.py`를 담당하는 장원준은 위 CSV를 기반으로 ML 학습에 필요한 형태로 자유롭게 전처리 로직을 설계한다.
+app.py와의 연결은 `filter_apartments()`의 반환 스펙(DataFrame, reset_index 적용)만 유지하면 된다.
 
 ---
 

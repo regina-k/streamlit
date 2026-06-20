@@ -1,0 +1,10 @@
+@"
+vector_store/index.faiss
+vector_store/index.pkl
+vector_store/shinhan_faiss/
+.env
+__pycache__/
+*.pyc
+docs/shinhan_faq/_debug_*.xml
+docs/shinhan_faq/_debug_*.json
+"@ | Out-File -FilePath .gitignore -Encoding utf8

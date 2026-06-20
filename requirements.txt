@@ -1,0 +1,14 @@
+streamlit
+requests
+pandas
+numpy
+python-dotenv
+openai
+langchain
+langchain-openai
+faiss-cpu
+tiktoken
+lightgbm
+xgboost
+scikit-learn
+joblib

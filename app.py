@@ -39,6 +39,150 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
+
+# ── 전역 스타일 (하늘색 테마 + 전문 UI) ────────────────────────────────
+def _inject_styles():
+    import base64, pathlib
+    img_path = pathlib.Path("sol.png.png")
+    img_b64 = ""
+    if img_path.exists():
+        img_b64 = base64.b64encode(img_path.read_bytes()).decode()
+
+    char_sidebar = f"""
+        <div style="text-align:center; padding: 8px 0 4px 0;">
+            <img src="data:image/png;base64,{img_b64}"
+                 style="width:110px; filter: drop-shadow(0 4px 8px rgba(0,120,200,0.18));"
+                 alt="SOL 캐릭터"/>
+        </div>
+    """ if img_b64 else ""
+
+    char_main = f"""
+        <img src="data:image/png;base64,{img_b64}"
+             style="width:90px; position:absolute; right:24px; top:-10px;
+                    filter: drop-shadow(0 4px 12px rgba(0,120,200,0.22));"
+             alt="SOL"/>
+    """ if img_b64 else ""
+
+    st.markdown(f"""
+    <style>
+    /* ── 전체 배경 ── */
+    .stApp {{
+        background: linear-gradient(135deg, #e8f4fd 0%, #dceefb 40%, #cfe3f5 100%);
+    }}
+
+    /* ── 사이드바 ── */
+    [data-testid="stSidebar"] {{
+        background: linear-gradient(180deg, #1a5fa8 0%, #1e73be 60%, #2589d4 100%) !important;
+        border-right: none;
+        box-shadow: 4px 0 20px rgba(26,95,168,0.18);
+    }}
+    [data-testid="stSidebar"] * {{
+        color: #ffffff !important;
+    }}
+    [data-testid="stSidebar"] .stTextInput input,
+    [data-testid="stSidebar"] .stSelectbox select {{
+        background: rgba(255,255,255,0.15) !important;
+        border: 1px solid rgba(255,255,255,0.35) !important;
+        color: #fff !important;
+        border-radius: 8px !important;
+    }}
+    [data-testid="stSidebar"] .stButton button {{
+        background: #ffffff !important;
+        color: #1a5fa8 !important;
+        font-weight: 700 !important;
+        border-radius: 8px !important;
+        border: none !important;
+    }}
+
+    /* ── 메인 헤더 배너 ── */
+    .main-header {{
+        background: linear-gradient(90deg, #1a5fa8 0%, #2589d4 100%);
+        border-radius: 16px;
+        padding: 28px 36px;
+        margin-bottom: 24px;
+        position: relative;
+        overflow: visible;
+        box-shadow: 0 4px 20px rgba(26,95,168,0.20);
+    }}
+    .main-header h1 {{
+        color: #ffffff !important;
+        font-size: 1.9rem !important;
+        font-weight: 800 !important;
+        margin: 0 !important;
+        letter-spacing: -0.5px;
+    }}
+    .main-header p {{
+        color: rgba(255,255,255,0.82) !important;
+        margin: 6px 0 0 0 !important;
+        font-size: 0.95rem !important;
+    }}
+
+    /* ── 카드 스타일 ── */
+    [data-testid="stMetricValue"] {{
+        font-weight: 700 !important;
+        color: #1a5fa8 !important;
+    }}
+    div[data-testid="stVerticalBlock"] > div[data-testid="stVerticalBlockBorderWrapper"] {{
+        background: rgba(255,255,255,0.82) !important;
+        border-radius: 12px !important;
+        border: 1px solid rgba(26,95,168,0.12) !important;
+        box-shadow: 0 2px 12px rgba(26,95,168,0.08) !important;
+        backdrop-filter: blur(4px);
+    }}
+
+    /* ── 탭 ── */
+    .stTabs [data-baseweb="tab-list"] {{
+        background: rgba(255,255,255,0.6);
+        border-radius: 12px;
+        padding: 4px;
+        gap: 4px;
+    }}
+    .stTabs [data-baseweb="tab"] {{
+        border-radius: 8px !important;
+        font-weight: 600 !important;
+        color: #1a5fa8 !important;
+    }}
+    .stTabs [aria-selected="true"] {{
+        background: #1a5fa8 !important;
+        color: #ffffff !important;
+    }}
+
+    /* ── 버튼 ── */
+    .stButton > button[kind="primary"] {{
+        background: linear-gradient(90deg, #1a5fa8, #2589d4) !important;
+        color: #fff !important;
+        border-radius: 10px !important;
+        font-weight: 700 !important;
+        border: none !important;
+        box-shadow: 0 2px 8px rgba(26,95,168,0.25) !important;
+    }}
+
+    /* ── 데이터프레임 ── */
+    .stDataFrame {{
+        border-radius: 12px !important;
+        overflow: hidden !important;
+    }}
+
+    /* ── 구분선 ── */
+    hr {{
+        border-color: rgba(26,95,168,0.15) !important;
+    }}
+    </style>
+
+    {char_sidebar}
+    """, unsafe_allow_html=True)
+
+    # 메인 헤더 배너 (캐릭터 포함)
+    st.markdown(f"""
+    <div class="main-header">
+        {char_main}
+        <h1>🏙️ AI 기반 부동산 분석 & 대출 제안</h1>
+        <p>신한은행 AI Intensive 7조 | KB부동산 시세 기반 · OpenAI GPT-4o 분석</p>
+    </div>
+    """, unsafe_allow_html=True)
+
+_inject_styles()
+
 # ── 캐시 래퍼 ────────────────────────────────────────────────────────────
 @st.cache_data(show_spinner="CSV 데이터를 불러오는 중...")
 def _cached_load_kb_apt_data() -> pd.DataFrame:
@@ -50,7 +194,7 @@ def _cached_load_kb_apt_data() -> pd.DataFrame:
 # ═══════════════════════════════════════════════════════════════════════
 
 with st.sidebar:
-    st.title("🏠 내 집 정보 입력")
+    st.markdown("<h2 style='color:#fff;font-size:1.1rem;font-weight:700;text-align:center;margin:0 0 8px 0;'>🏠 내 집 정보 입력</h2>", unsafe_allow_html=True)
     st.markdown("---")
 
     # ── OpenAI API Key ───────────────────────────────────────────────
@@ -185,7 +329,7 @@ with st.sidebar:
 # 메인 화면 — 3개 탭
 # ═══════════════════════════════════════════════════════════════════════
 
-st.title("🏙️ AI 기반 부동산 분석 & 대출 제안 서비스")
+# 타이틀은 _inject_styles()의 main-header 배너로 대체됨
 
 tab1, tab2, tab3 = st.tabs(["🔍 단지 탐색", "👤 내 투자 프로파일", "📊 AI 종합 분석"])
 
@@ -204,9 +348,18 @@ if df_all is not None and not df_all.empty:
         price_col = _numeric_cols[0] if _numeric_cols else None
 
 # 지역 / 동 / 세대수 컬럼 자동 감지
-region_col = next((c for c in ["시군구", "지역", "구", "시도"] if c in (df_all.columns if df_all is not None else [])), None)
-dong_col   = next((c for c in ["법정동", "동", "읍면동"] if c in (df_all.columns if df_all is not None else [])), None)
-units_col  = next((c for c in ["세대수", "총세대수", "units"] if c in (df_all.columns if df_all is not None else [])), None)
+# 컬럼 자동 감지 — 이름 후보 목록을 우선순위 순으로 탐색
+_cols = list(df_all.columns) if df_all is not None else []
+region_col = next((c for c in ["시군구", "지역", "구", "시도", "행정구역", "지역명", "구명", "region"] if c in _cols), None)
+dong_col   = next((c for c in ["법정동", "동", "읍면동", "동명", "법정동명", "dong"] if c in _cols), None)
+units_col  = next((c for c in ["세대수", "총세대수", "units", "세대"] if c in _cols), None)
+
+# region_col을 못 찾은 경우 — 고유값 수가 적은 문자열 컬럼을 지역 컬럼으로 자동 추정
+if region_col is None and df_all is not None and not df_all.empty:
+    for _c in df_all.select_dtypes(include="object").columns:
+        if 2 <= df_all[_c].nunique() <= 50:
+            region_col = _c
+            break
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -267,10 +420,17 @@ with tab1:
         with f_col1:
             if region_col and df_all is not None:
                 region_options = ["전체"] + sorted(df_all[region_col].dropna().unique().tolist())
-                sel_region = st.selectbox("지역 (시군구)", region_options, key="filter_region")
+                sel_region = st.selectbox(f"지역 ({region_col})", region_options, key="filter_region")
             else:
-                sel_region = "전체"
-                st.selectbox("지역 (시군구)", ["전체"], key="filter_region")
+                # 컬럼을 자동 감지하지 못한 경우 — 텍스트로 직접 입력
+                sel_region = st.text_input(
+                    "지역 직접 입력",
+                    placeholder="예: 강남구",
+                    key="filter_region",
+                    help="CSV 컬럼을 자동으로 찾지 못했습니다. 지역명을 직접 입력하세요.",
+                )
+                if not sel_region:
+                    sel_region = "전체"
 
         with f_col2:
             # 선택된 지역에 따라 동 필터 동적 갱신
@@ -773,4 +933,3 @@ with tab3:
 # ── 푸터 ─────────────────────────────────────────────────────────────
 st.markdown("---")
 st.caption("데이터 출처: KB부동산  |  AI 분석 엔진: OpenAI GPT-4o  |  신한은행 AI Intensive 7조")
-

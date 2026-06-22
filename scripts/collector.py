@@ -2,7 +2,7 @@
 신한은행 주담대 상품 정보 수집기
 - 신한은행 홈페이지 스크래핑 (BeautifulSoup)
 - 금융감독원 finlife API (주택담보대출 비교 공시)
-→ 수집 결과를 docs/shinhan_faq/ 에 마크다운으로 저장
+→ 수집 결과를 data/rag_docs/shinhan_faq/ 에 마크다운으로 저장
 
 사용법:
     pip install requests beautifulsoup4 python-dotenv
@@ -26,7 +26,7 @@ load_dotenv()
 # ──────────────────────────────────────────
 # 설정
 # ──────────────────────────────────────────
-OUTPUT_DIR = Path("docs/shinhan_faq")
+OUTPUT_DIR = Path("data/rag_docs/shinhan_faq")
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 HEADERS = {
@@ -396,7 +396,7 @@ def generate_regulation_template():
     print("\n📋 [3단계] 규제 정보 템플릿 생성")
     print("=" * 50)
 
-    regs_dir = Path("docs/regulations")
+    regs_dir = Path("data/rag_docs/regulations")
     regs_dir.mkdir(parents=True, exist_ok=True)
 
     content = REGULATION_TEMPLATE.format(date=datetime.now().strftime("%Y-%m-%d"))
@@ -426,6 +426,6 @@ if __name__ == "__main__":
 
     print("\n✅ 전체 수집 완료!")
     print("\n📌 다음 단계:")
-    print("  1. docs/ 폴더의 _수동입력필요.md 파일들 직접 채우기")
+    print("  1. data/rag_docs/ 폴더의 _수동입력필요.md 파일들 직접 채우기")
     print("  2. .env에 FINLIFE_API_KEY 추가 후 재실행")
     print("  3. python scripts/build_vectorstore.py 실행 → RAG 인덱싱")

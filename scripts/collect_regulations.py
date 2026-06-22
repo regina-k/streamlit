@@ -12,7 +12,7 @@
     python scripts/collect_regulations.py
 
 결과:
-    docs/regulations/ 폴더에 마크다운 파일 저장
+    data/rag_docs/regulations/ 폴더에 마크다운 파일 저장
 """
 
 import os
@@ -27,7 +27,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-OUTPUT_DIR = Path("docs/regulations")
+OUTPUT_DIR = Path("data/rag_docs/regulations")
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 TODAY = datetime.now().strftime("%Y-%m-%d")

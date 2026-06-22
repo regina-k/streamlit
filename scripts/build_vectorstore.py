@@ -1,6 +1,6 @@
 """
 RAG 벡터 DB 구축 스크립트
-docs/ 폴더의 마크다운 파일들을 읽어서
+data/rag_docs/ 폴더의 마크다운 파일들을 읽어서
 청킹 → 임베딩 → FAISS 저장
 
 사용법:
@@ -9,8 +9,8 @@ docs/ 폴더의 마크다운 파일들을 읽어서
 
 전제조건:
     - .env에 OPENAI_API_KEY 설정
-    - docs/shinhan_faq/*.md 파일 존재 (shinhan_scraper_v4.py 실행 후)
-    - docs/regulations/*.md 파일 존재
+    - data/rag_docs/shinhan_faq/*.md 파일 존재 (shinhan_scraper_v4.py 실행 후)
+    - data/rag_docs/regulations/*.md 파일 존재
 """
 
 import os
@@ -21,7 +21,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # ── 설정 ─────────────────────────────────────────────────
-DOCS_DIR        = Path("docs")
+DOCS_DIR        = Path("data/rag_docs")
 VECTORSTORE_DIR = Path("vector_store")
 VECTORSTORE_DIR.mkdir(exist_ok=True)
 
@@ -69,7 +69,7 @@ def load_documents():
     md_files = list(DOCS_DIR.rglob("*.md"))
 
     if not md_files:
-        print(f"  ❌ docs/ 폴더에 마크다운 파일이 없습니다.")
+        print(f"  ❌ data/rag_docs/ 폴더에 마크다운 파일이 없습니다.")
         print(f"  먼저 shinhan_scraper_v4.py를 실행하세요.")
         exit(1)
 

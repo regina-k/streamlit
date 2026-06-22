@@ -808,15 +808,33 @@ def predict_price_growth(
 ) -> dict:
     """Predict apartment return while keeping the original app contract."""
     normalized_horizon = _normalize_horizon(horizon)
-    if normalized_horizon != SUPPORTED_HORIZON:
-        return {
-            "region": region,
-            "horizon": horizon,
-            "predicted_growth_pct": 0.0,
-            "confidence": "low",
-            "model_version": MODEL_VERSION,
-            "note": "Only 1yr/12m prediction is currently supported by this compatibility function.",
-        }
+    months = HORIZON_ALIASES.get(normalized_horizon)
+
+    if months in {12, 24, 36, 48, 60}:
+        try:
+            result = predict_apartment_growth_horizons(
+                current_price_manwon=current_index,
+                horizons=(f"{months}m",),
+            )
+            pred = result["predictions"][0]
+            return {
+                "region": result.get("region", region),
+                "horizon": horizon,
+                "predicted_growth_pct": pred.get("predicted_growth_pct", 0.0),
+                "confidence": pred.get("confidence", "low"),
+                "model_version": result.get("model_version", MULTIHORIZON_MODEL_VERSION),
+                "note": pred.get("note", ""),
+            }
+        except Exception as exc:
+            if months != 12:
+                return {
+                    "region": region,
+                    "horizon": horizon,
+                    "predicted_growth_pct": 0.0,
+                    "confidence": "low",
+                    "model_version": MULTIHORIZON_MODEL_VERSION,
+                    "note": f"Multi-horizon prediction unavailable: {exc}",
+                }
 
     try:
         row = _select_feature_row(

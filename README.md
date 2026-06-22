@@ -39,8 +39,9 @@ project_root/
 │   └── rag_advisor.py        # RAG/LLM 어드바이저 (김동하) ← STUB
 │
 ├── data/
-│   ├── kb_apt_seoul_full.csv      # KB 단지·시세 데이터 (normalize_to_csv.py 출력)
-│   └── kb_timeseries_seoul.csv    # KB 월별 시세 시계열 (collect_kb_timeseries.py 출력)
+│   ├── apartment/                 # KB 단지·월별 시세 원천 CSV (git 제외, .gitkeep만 유지)
+│   ├── integration/               # ML 통합 feature store (git 제외, .gitkeep만 유지)
+│   └── rag_docs/                  # RAG 원천 문서: 신한 FAQ, 규제 문서 (git 추적)
 │
 ├── models/                   # 학습된 ML 모델 (장원준)
 └── vector_store/             # RAG 벡터 DB (김동하)

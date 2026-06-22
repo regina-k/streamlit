@@ -21,6 +21,7 @@ data/**
 !data/
 !data/**/
 !data/**/.gitkeep
+!data/rag_docs/**
 
 # Vector store artifacts
 vector_store/**
@@ -28,8 +29,8 @@ vector_store/**
 !vector_store/.gitkeep
 
 # RAG scraper debug dumps
-docs/shinhan_faq/_debug_*.xml
-docs/shinhan_faq/_debug_*.json
+data/rag_docs/shinhan_faq/_debug_*.xml
+data/rag_docs/shinhan_faq/_debug_*.json
 
 # Notebook checkpoints
 .ipynb_checkpoints/

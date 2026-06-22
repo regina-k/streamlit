@@ -10,7 +10,7 @@ from bs4 import BeautifulSoup
 from pathlib import Path
 from datetime import datetime
 
-OUTPUT_DIR = Path("docs/shinhan_faq")
+OUTPUT_DIR = Path("data/rag_docs/shinhan_faq")
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 BASE_URL = "https://bank.shinhan.com"

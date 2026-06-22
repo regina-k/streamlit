@@ -419,7 +419,7 @@ with tab1:
                 if target_price_man > 0:
                     try:
                         loan_limit = calc_loan_limit(target_price_man)
-                        ltv        = calc_ltv(loan_limit, target_price_man)
+                        ltv        = calc_ltv(target_price_man, loan_limit)
                         cash_info  = calc_cash_needed(target_price_man, loan_limit, my_asset_man)
 
                         st.metric("대출 한도",    man_to_eok_str(int(loan_limit)))
@@ -644,7 +644,7 @@ with tab3:
         if target_price_man > 0:
             try:
                 loan_limit    = calc_loan_limit(target_price_man)
-                ltv           = calc_ltv(loan_limit, target_price_man)
+                ltv           = calc_ltv(target_price_man, loan_limit)
                 dsr           = calc_dsr(loan_limit, annual_income_man, existing_loan_man)
                 cash_info     = calc_cash_needed(target_price_man, loan_limit, available_cash_man)
                 loan_products = recommend_loan_products(

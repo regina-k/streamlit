@@ -33,6 +33,15 @@ NUMERIC_COLUMNS = [
     "월간전세변동률",
 ]
 
+AREA_TYPE_BOUNDS = {
+    "40㎡이하": (0.0, 40.0),
+    "60㎡이하": (40.0, 60.0),
+    "85㎡이하": (60.0, 85.0),
+    "102㎡이하": (85.0, 102.0),
+    "135㎡이하": (102.0, 135.0),
+    "135㎡초과": (135.0, float("inf")),
+}
+
 
 def load_kb_apt_data() -> pd.DataFrame:
     """로컬 KB 단지 CSV를 로드하고 컬럼 타입을 정규화한다.
@@ -98,9 +107,12 @@ def filter_apartments(
     keyword: str | None = None,
     price_min: int | None = None,
     price_max: int | None = None,
+    price_range: tuple[int, int] | None = None,
     units_min: int | None = None,
+    units_range: tuple[int, int] | None = None,
     area_min: float | None = None,
     area_max: float | None = None,
+    area_type: str | None = None,
 ) -> pd.DataFrame:
     """조건에 따라 아파트 DataFrame을 필터링한다.
 
@@ -135,12 +147,20 @@ def filter_apartments(
             mask &= df[name_col].astype(str).str.contains(
                 str(keyword), case=False, na=False, regex=False
             )
+    if price_range is not None:
+        price_min, price_max = price_range
     if price_min is not None and "KB매매시세(만원)" in df.columns:
         mask &= df["KB매매시세(만원)"] >= price_min
     if price_max is not None and "KB매매시세(만원)" in df.columns:
         mask &= df["KB매매시세(만원)"] <= price_max
+    if units_range is not None:
+        units_min, units_max = units_range
+        if "세대수" in df.columns:
+            mask &= df["세대수"] <= units_max
     if units_min is not None and "세대수" in df.columns:
         mask &= df["세대수"] >= units_min
+    if area_type in AREA_TYPE_BOUNDS:
+        area_min, area_max = AREA_TYPE_BOUNDS[area_type]
     if area_min is not None and "공급면적(평)" in df.columns:
         mask &= df["공급면적(평)"] >= area_min
     if area_max is not None and "공급면적(평)" in df.columns:

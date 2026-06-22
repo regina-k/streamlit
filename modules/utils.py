@@ -1,30 +1,20 @@
-"""
-공통 유틸리티 함수 모음.
-어떤 모듈에서도 의존성 없이 import 가능한 순수 함수만 포함한다.
-"""
+"""Small formatting helpers shared by Streamlit modules."""
 
 
 def format_price_kor(eok: float) -> str:
-    """억 단위 float을 한글 금액 문자열로 변환한다.
+    """Format an amount expressed in eok won as Korean money text."""
+    value = float(eok or 0)
+    sign = "-" if value < 0 else ""
+    total_man = round(abs(value) * 10000)
+    eok_part, man_part = divmod(total_man, 10000)
 
-    Args:
-        eok: 억 단위 금액. 예) 13.4
-
-    Returns:
-        한글 금액 문자열. 예) '13억 4,000만 원'
-    """
-    # TODO: 구현
-    pass
+    if eok_part and man_part:
+        return f"{sign}{eok_part:,}억 {man_part:,}만 원"
+    if eok_part:
+        return f"{sign}{eok_part:,}억 원"
+    return f"{sign}{man_part:,}만 원"
 
 
-def man_to_eok_str(man: int) -> str:
-    """만원 단위 int를 한글 금액 문자열로 변환한다.
-
-    Args:
-        man: 만원 단위 금액. 예) 134000
-
-    Returns:
-        한글 금액 문자열. 예) '13억 4,000만 원'
-    """
-    # TODO: format_price_kor(man / 10000) 호출로 구현
-    pass
+def man_to_eok_str(man: int | float) -> str:
+    """Format an amount expressed in manwon as Korean money text."""
+    return format_price_kor(float(man or 0) / 10000)

@@ -14,11 +14,17 @@ data/rag_docs/ 폴더의 마크다운 파일들을 읽어서
 """
 
 import os
+import sys
 import time
 from pathlib import Path
 from dotenv import load_dotenv
 
 load_dotenv()
+
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8")
 
 # ── 설정 ─────────────────────────────────────────────────
 DOCS_DIR        = Path("data/rag_docs")

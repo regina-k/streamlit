@@ -1,9 +1,9 @@
-project:
+﻿project:
   name: apartment_return_lightgbm_ver6e_12m_return_l1
   random_state: 42
 
 paths:
-  data_path: "C:/Users/User/Desktop/final/data/integration/apartment_multihorizon_ver6_individual.csv"
+  data_path: "C:/Users/User/Desktop/final/streamlit/data/integration/apartment_multihorizon_ver6_individual.csv"
   output_dir: "C:/Users/User/Desktop/final/streamlit/ml_model/outputs"
   model_dir: "C:/Users/User/Desktop/final/streamlit/ml_model/outputs/models"
   prediction_dir: "C:/Users/User/Desktop/final/streamlit/ml_model/outputs/predictions"
@@ -88,3 +88,4 @@ model:
 metrics:
   primary: mae
   enabled: [mae, rmse, r2, mape, spearman]
+

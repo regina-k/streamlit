@@ -1,4 +1,4 @@
-project:
+﻿project:
   name: ver16_hierarchical_apt_size_residual
   purpose: "One-command reproduction for the current service candidate"
 
@@ -7,8 +7,8 @@ pipeline:
   base_training_config: config_ver9b_multihorizon_calibrated.yaml
 
 data:
-  training_feature_store: "data/integration/apartment_multihorizon_ver9_stability_features.csv"
-  service_feature_store: "data/integration/apartment_multihorizon_ver9_latest_features.csv"
+  training_feature_store: "streamlit/data/integration/apartment_multihorizon_ver9_stability_features.csv"
+  service_feature_store: "streamlit/data/integration/apartment_multihorizon_ver9_latest_features.csv"
   target_column: target_return_pct
   horizon_column: horizon_months
   supported_horizons: [12, 24, 36, 60]
@@ -48,3 +48,4 @@ performance:
   test_spearman: 0.8715
   test_p80: 8.6336
   test_p90: 13.6911
+

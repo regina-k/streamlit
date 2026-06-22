@@ -1,9 +1,9 @@
-project:
+﻿project:
   name: apartment_return_lightgbm_ver8a_market_regime
   random_state: 42
 
 paths:
-  data_path: "C:/Users/User/Desktop/final/data/integration/apartment_12m_ver8_market_regime_features.csv"
+  data_path: "C:/Users/User/Desktop/final/streamlit/data/integration/apartment_12m_ver8_market_regime_features.csv"
   output_dir: "C:/Users/User/Desktop/final/streamlit/ml_model/outputs"
   model_dir: "C:/Users/User/Desktop/final/streamlit/ml_model/outputs/models"
   prediction_dir: "C:/Users/User/Desktop/final/streamlit/ml_model/outputs/predictions"
@@ -145,3 +145,4 @@ group_evaluation:
     complex_size_quartile:
       column: households_total
       type: quantile
+

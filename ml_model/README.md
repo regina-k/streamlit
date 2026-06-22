@@ -25,8 +25,8 @@ config/config_ver16_reproduction.yaml
 ## 주요 데이터
 
 ```text
-C:/Users/User/Desktop/final/data/integration/apartment_multihorizon_ver9_stability_features.csv
-C:/Users/User/Desktop/final/data/integration/apartment_multihorizon_ver9_latest_features.csv
+C:/Users/User/Desktop/final/streamlit/data/integration/apartment_multihorizon_ver9_stability_features.csv
+C:/Users/User/Desktop/final/streamlit/data/integration/apartment_multihorizon_ver9_latest_features.csv
 ```
 
 첫 번째 파일은 학습/검증/테스트용 feature store이고, 두 번째 파일은 서비스 inference용 최신 기준월 feature store이다.

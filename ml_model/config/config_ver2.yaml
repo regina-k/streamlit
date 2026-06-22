@@ -1,9 +1,9 @@
-project:
+﻿project:
   name: apartment_return_lightgbm_ver2_multihorizon
   random_state: 42
 
 paths:
-  data_path: "C:/Users/User/Desktop/final/data/apartment/preprocessed/apartment_multihorizon.csv"
+  data_path: "C:/Users/User/Desktop/final/streamlit/data/apartment/preprocessed/apartment_multihorizon.csv"
   output_dir: "C:/Users/User/Desktop/final/streamlit/ml_model/outputs"
   model_dir: "C:/Users/User/Desktop/final/streamlit/ml_model/outputs/models"
   prediction_dir: "C:/Users/User/Desktop/final/streamlit/ml_model/outputs/predictions"
@@ -82,3 +82,4 @@ metrics:
     - r2
     - mape
     - spearman
+

@@ -25,7 +25,7 @@ DEFAULT_MODEL_PATH = (
     / "models"
     / "apartment_return_lightgbm_ver7d_gu_price_calibrated_target_return_pct_20260622_001315.pkl"
 )
-DEFAULT_FEATURE_STORE_PATH = ROOT_DIR / "data" / "integration" / "apartment_12m_ver6f_stability_features.csv"
+DEFAULT_FEATURE_STORE_PATH = STREAMLIT_DIR / "data" / "integration" / "apartment_12m_ver6f_stability_features.csv"
 DEFAULT_ERROR_PROFILE_PATH = (
     ML_MODEL_DIR / "outputs" / "performance" / "ver06220040_ver7d_error_profile.csv"
 )
@@ -37,7 +37,7 @@ MULTIHORIZON_MODEL_PATH = (
     / "ver16_service_multihorizon_base_model.pkl"
 )
 MULTIHORIZON_FEATURE_STORE_PATH = (
-    ROOT_DIR / "data" / "integration" / "apartment_multihorizon_ver9_latest_features.csv"
+    STREAMLIT_DIR / "data" / "integration" / "apartment_multihorizon_ver9_latest_features.csv"
 )
 COMPLEX_RESIDUAL_OFFSET_PATH = (
     ML_MODEL_DIR / "outputs" / "calibration" / "ver11_complex_residual_offsets.csv"

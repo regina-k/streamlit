@@ -206,6 +206,12 @@ outputs/calibration/ver16_hierarchical_apt_size_shrinkage_grid.json
 outputs/pipeline_ver16_hierarchical_apt_size_residual_<timestamp>.json
 ```
 
+현재 데이터 루트는 다음 경로이다.
+
+```text
+C:/Users/User/Desktop/final/streamlit/data
+```
+
 ## 최종 판단
 
 ver16은 현재까지의 실험 중 개별 단지/평형 상승률 예측 목적에 가장 적합하다. ver14의 test MAE가 일시적으로 더 낮았지만 holdout 안정성 검증을 통과하지 못했고, ver16은 test와 validation holdout 양쪽에서 개선을 보였다. 따라서 제출 및 서비스 연결 기준 최종 모델은 `ver16_hierarchical_apt_size_residual`로 정리한다.

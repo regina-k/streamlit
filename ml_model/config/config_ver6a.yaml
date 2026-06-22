@@ -1,9 +1,9 @@
-project:
+﻿project:
   name: apartment_return_lightgbm_ver6a_fixed_window_multihorizon
   random_state: 42
 
 paths:
-  data_path: "C:/Users/User/Desktop/final/data/integration/apartment_multihorizon_poi.csv"
+  data_path: "C:/Users/User/Desktop/final/streamlit/data/integration/apartment_multihorizon_poi.csv"
   output_dir: "C:/Users/User/Desktop/final/streamlit/ml_model/outputs"
   model_dir: "C:/Users/User/Desktop/final/streamlit/ml_model/outputs/models"
   prediction_dir: "C:/Users/User/Desktop/final/streamlit/ml_model/outputs/predictions"
@@ -87,3 +87,4 @@ model:
 metrics:
   primary: mae
   enabled: [mae, rmse, r2, mape, spearman]
+

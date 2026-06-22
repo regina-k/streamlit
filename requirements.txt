@@ -5,9 +5,12 @@ numpy
 python-dotenv
 openai
 langchain
+langchain-community
 langchain-openai
+langchain-text-splitters
 faiss-cpu
 tiktoken
+beautifulsoup4
 lightgbm
 xgboost
 scikit-learn

@@ -1,0 +1,41 @@
+# Python caches
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Local configuration
+.env
+.env.*
+
+# Streamlit local state
+.streamlit/secrets.toml
+
+# Notebook checkpoints
+.ipynb_checkpoints/
+
+# Model and experiment artifacts
+ml_model/outputs/**
+!ml_model/outputs/
+!ml_model/outputs/**/
+!ml_model/outputs/**/*.md
+
+# Common generated ML files outside outputs
+*.pkl
+*.pickle
+*.joblib
+*.model
+*.onnx
+
+# Logs and temporary files
+*.log
+*.tmp
+*.bak
+~$*

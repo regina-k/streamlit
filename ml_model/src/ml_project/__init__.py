@@ -1,0 +1,2 @@
+"""Apartment return prediction project."""
+

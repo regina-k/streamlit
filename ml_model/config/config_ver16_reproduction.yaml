@@ -1,0 +1,105 @@
+project:
+  name: ver16_hierarchical_apt_size_residual
+  purpose: "Service candidate for clicked apartment-size return prediction"
+  base_model_artifact: "outputs/models/apartment_return_lightgbm_ver9b_multihorizon_calibrated_target_return_pct_20260622_060733.pkl"
+
+pipeline:
+  type: train_then_ver16_post_calibration
+  base_training_config: config_ver9b_multihorizon_calibrated.yaml
+
+data:
+  training_feature_store: "C:/Users/User/Desktop/final/data/integration/apartment_multihorizon_ver9_stability_features.csv"
+  service_feature_store: "C:/Users/User/Desktop/final/data/integration/apartment_multihorizon_ver9_latest_features.csv"
+  target_column: target_return_pct
+  horizon_column: horizon_months
+  supported_horizons: [12, 24, 36, 60]
+  evaluated_horizons: [12, 24, 36, 48]
+  note: "60m can be inferred by the single multi-horizon model, but has no mature test window yet."
+
+base_model:
+  algorithm: LightGBM
+  interface: "single multi-horizon regression model; pass horizon_months at inference time"
+  split:
+    strategy: time_by_horizon_tail
+    valid_tail_months: 5
+    test_tail_months: 5
+    short_horizon_train_only: true
+  feature_sets:
+    - horizon
+    - kb_market
+    - apartment_meta
+    - poi_accessibility
+    - individual_stability_without_actual_tx
+  categorical_columns:
+    - gu
+    - property_type
+    - housing_type
+  model_params:
+    objective: regression
+    n_estimators: 1200
+    learning_rate: 0.03
+    num_leaves: 63
+    subsample: 0.9
+    colsample_bytree: 0.9
+    min_child_samples: 80
+    reg_lambda: 1.0
+  calibration:
+    method: grouped_mean_residual
+    groups:
+      - horizon_months
+      - gu
+      - kb_sale_price_manwon_quantile_4
+    shrinkage: 500
+    min_rows: 100
+
+post_calibration:
+  version: ver16
+  script: "C:/Users/User/Desktop/final/scripts/compare_hierarchical_apt_size_shrinkage.py"
+  complex_offsets: "C:/Users/User/Desktop/final/streamlit/ml_model/outputs/calibration/ver12c_recent3_horizon_complex_residual_offsets.csv"
+  group_offsets: "C:/Users/User/Desktop/final/streamlit/ml_model/outputs/calibration/ver12d_group_residual_fallback_offsets.csv"
+  service_model_output: "C:/Users/User/Desktop/final/streamlit/ml_model/outputs/models/ver16_service_multihorizon_base_model.pkl"
+  output_offsets: "C:/Users/User/Desktop/final/streamlit/ml_model/outputs/calibration/ver16_hierarchical_apt_size_offsets.csv"
+  output_grid: "C:/Users/User/Desktop/final/streamlit/ml_model/outputs/calibration/ver16_hierarchical_apt_size_shrinkage_grid.json"
+  prediction_column: prediction_calibrated
+  source_months: 3
+  shrinkage: 0.5
+  min_rows: 1
+  fallback_order:
+    - hier_apt_size_id+horizon
+    - complex_id+horizon
+    - group_gu_area
+    - horizon_global
+    - global
+
+reproduce:
+  one_command:
+    - "cd C:/Users/User/Desktop/final/streamlit/ml_model"
+    - "$env:PYTHONPATH='src'"
+    - "python -m ml_project.train --config config/config.yaml"
+  base_model_training_only:
+    - "cd C:/Users/User/Desktop/final/streamlit/ml_model"
+    - "$env:PYTHONPATH='src'"
+    - "python -m ml_project.train --config config/config_ver9b_multihorizon_calibrated.yaml"
+  ver16_offsets:
+    - "cd C:/Users/User/Desktop/final"
+    - "& ./streamlit/ml_model/.venv/Scripts/python.exe ./scripts/compare_hierarchical_apt_size_shrinkage.py --selected-source-months 3 --selected-shrinkage 0.5 --selected-min-rows 1"
+  verification:
+    - "python -m py_compile ./scripts/compare_hierarchical_apt_size_shrinkage.py ./scripts/analyze_service_offset_coverage.py ./scripts/smoke_test_service_prediction.py ./scripts/smoke_test_service_ui_captions.py ./streamlit/modules/ml_predictor.py"
+    - "& ./streamlit/ml_model/.venv/Scripts/python.exe ./scripts/smoke_test_service_prediction.py"
+    - "& ./streamlit/ml_model/.venv/Scripts/python.exe ./scripts/smoke_test_service_ui_captions.py"
+    - "& ./streamlit/ml_model/.venv/Scripts/python.exe ./scripts/analyze_service_offset_coverage.py"
+
+service:
+  module: "C:/Users/User/Desktop/final/streamlit/modules/ml_predictor.py"
+  function: predict_apartment_growth_horizons
+  model_version: ver16_hierarchical_apt_size_residual
+  note: "app.py is UI-only for this experiment. Reverting app.py does not remove the model artifacts or predictor implementation."
+
+performance:
+  report: "C:/Users/User/Desktop/final/streamlit/ml_model/outputs/performance/ver06222256_ver16_hierarchical_apt_size_shrinkage.md"
+  test_mae: 5.0376
+  test_rmse: 8.1711
+  test_r2: 0.7150
+  test_spearman: 0.8715
+  test_p80: 8.6336
+  test_p90: 13.6911

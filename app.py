@@ -212,6 +212,27 @@ def _apply_growth_scores(df: pd.DataFrame, price_column: str | None, score_map: 
     return result
 
 
+def _target_prediction_key(row: pd.Series | dict, price_column: str | None) -> str:
+    return _candidate_key(row, price_column)
+
+
+def _get_target_horizon_predictions(row: pd.Series | dict, price_column: str | None) -> dict | None:
+    key = _target_prediction_key(row, price_column)
+    cache = st.session_state.setdefault("target_horizon_predictions", {})
+    if key in cache:
+        return cache[key]
+    if not price_column or not row.get(price_column):
+        return None
+    result = predict_apartment_growth_horizons(
+        complex_id=row.get("단지ID"),
+        area_serial_no=row.get("면적일련번호"),
+        current_price_manwon=row.get(price_column),
+        horizons=("12m", "36m", "60m"),
+    )
+    cache[key] = result
+    return result
+
+
 def _score_growth_candidates(df: pd.DataFrame, price_column: str | None, limit: int = 30) -> dict[str, float]:
     scores: dict[str, float] = {}
     if df is None or df.empty or not price_column:
@@ -244,7 +265,6 @@ def _format_result_table(df: pd.DataFrame, price_column: str | None) -> pd.DataF
     display["_row_id"] = range(len(df))
     column_map = [
         ("단지명", "단지명"),
-        ("검색유사도", "검색유사도"),
         ("시군구", "지역"),
         ("동", "동"),
         ("세대수", "세대수"),
@@ -274,10 +294,6 @@ def _format_result_table(df: pd.DataFrame, price_column: str | None) -> pd.DataF
         display["세대수"] = display["세대수"].apply(
             lambda v: f"{int(v):,}세대" if pd.notna(v) else "데이터 없음"
         )
-    if "검색유사도" in display.columns:
-        display["검색유사도"] = display["검색유사도"].apply(
-            lambda v: f"{int(v)}점" if pd.notna(v) else "데이터 없음"
-        )
     if "AI예측(1년)" in display.columns:
         display["AI예측(1년)"] = display["AI예측(1년)"].apply(
             lambda v: f"{float(v):+.1f}%" if pd.notna(v) else "계산 전"
@@ -293,141 +309,23 @@ def _format_result_table(df: pd.DataFrame, price_column: str | None) -> pd.DataF
 # 사이드바
 # ═══════════════════════════════════════════════════════════════════════
 
-with st.sidebar:
-    st.title("🏠 내 집 정보 입력")
-    st.markdown("---")
+env_key = os.getenv("OPENAI_API_KEY", "").strip()
+api_key = env_key
 
-    env_key = os.getenv("OPENAI_API_KEY", "").strip()
-    api_key = env_key
+purchase_year = int(st.session_state.get("purchase_year", 2023))
+purchase_month = int(st.session_state.get("purchase_month", 4))
+purchase_eok = float(st.session_state.get("purchase_eok_value", 7.4))
+purchase_date_str = f"{purchase_year}년 {purchase_month}월"
+my_purchase_price_man = round(purchase_eok * 10000)
+
+with st.sidebar:
+    st.title("⚙️ 실행 상태")
     with st.expander("AI 연결 상태", expanded=False):
         if env_key:
             st.success("환경변수의 OpenAI API Key로 AI 분석을 사용할 수 있습니다.")
         else:
             st.warning("OPENAI_API_KEY가 없어 AI 어드바이저만 비활성화됩니다.")
-    st.markdown("---")
-
-    # ── STEP 1: 내 아파트 검색 ──────────────────────────────────────
-    st.subheader("📍 STEP 1 — 내 아파트 검색")
-
-    search_keyword = st.text_input(
-        "아파트 이름을 입력하세요",
-        placeholder="예: 래미안 대치",
-        key="search_keyword_input",
-    )
-
-    suggestions = []
-    if search_keyword.strip():
-        with st.spinner("단지를 검색 중..."):
-            try:
-                suggestions = fetch_search_suggestions(search_keyword.strip())
-            except Exception as e:
-                st.error(f"단지 검색 실패: {e}")
-
-    if suggestions:
-        labels    = [s["label"] for s in suggestions]
-        sel_label = st.selectbox("검색된 단지 선택", options=labels, key="complex_select")
-        sel_item  = next((s for s in suggestions if s["label"] == sel_label), None)
-
-        if st.button("✅ 이 단지로 확정", width="stretch"):
-            if sel_item:
-                try:
-                    with st.spinner("KB부동산에서 단지 정보를 가져오는 중..."):
-                        complex_meta = fetch_complex_id(sel_item["textTemp"])
-
-                    if not complex_meta or not complex_meta.get("complex_id"):
-                        st.error("단지 ID를 찾을 수 없습니다.")
-                    else:
-                        cid = complex_meta["complex_id"]
-                        with st.spinner("KB 시세를 불러오는 중..."):
-                            prices = fetch_complex_price(cid)
-
-                        st.session_state.update({
-                            "my_complex_id":    cid,
-                            "my_name":          complex_meta["name"],
-                            "my_addr":          complex_meta["addr"],
-                            "my_units":         complex_meta["units"],
-                            "my_completion":    complex_meta["completion"],
-                            "my_prices":        prices,
-                            "my_current_price": prices[0].get("매매일반거래가", 0) if prices else 0,
-                        })
-                        st.success("✅ 단지 정보 확정!")
-                except Exception as e:
-                    st.error(f"단지 정보 조회 실패: {e}")
-
-    elif search_keyword.strip():
-        st.warning("검색 결과가 없습니다.")
-
-    # ── 확정된 내 집 정보 카드 ───────────────────────────────────────
-    if st.session_state.get("my_name"):
-        with st.container(border=True):
-            st.markdown(f"**{st.session_state['my_name']}**")
-            st.caption(st.session_state.get("my_addr", ""))
-
-            c1, c2 = st.columns(2)
-            with c1:
-                units_value = _display_text(st.session_state.get("my_units"), "확인 전")
-                st.metric("세대수", f"{units_value}세대" if units_value != "확인 전" else units_value)
-            with c2:
-                st.metric("입주년월", _display_text(st.session_state.get("my_completion"), "확인 전"))
-
-            prices = st.session_state.get("my_prices", [])
-            if prices:
-                price_map = {
-                    f"{p.get('공급면적평', '?')}평  ·  {man_to_eok_str(int(p.get('매매일반거래가', 0) or 0))}":
-                    int(p.get("매매일반거래가", 0) or 0)
-                    for p in prices
-                }
-                chosen = st.selectbox("면적 선택 (KB시세 연동)", list(price_map.keys()))
-                st.session_state["my_current_price"] = price_map[chosen]
-                st.metric("현재 KB매매시세", man_to_eok_str(st.session_state["my_current_price"]))
-
-    st.markdown("---")
-
-    # ── STEP 1 계속: 매수 시점 + 매수가 ────────────────────────────
-    st.subheader("💰 매수 시점 및 매수가 입력")
-
-    p_col1, p_col2 = st.columns(2)
-    with p_col1:
-        purchase_year = st.selectbox(
-            "매수 연도",
-            options=list(range(2000, 2027)),
-            index=23,
-            format_func=lambda y: f"{y}년",
-            key="purchase_year",
-        )
-    with p_col2:
-        purchase_month = st.selectbox(
-            "매수 월",
-            options=list(range(1, 13)),
-            index=3,
-            format_func=lambda m: f"{m}월",
-            key="purchase_month",
-        )
-
-    purchase_date_str = f"{purchase_year}년 {purchase_month}월"
-
-    purchase_eok = st.number_input(
-        f"{purchase_date_str} 매수가 (억 원)",
-        min_value=0.0, max_value=500.0, value=7.4, step=0.1, format="%.1f",
-    )
-    my_purchase_price_man = round(purchase_eok * 10000)
-
-    if purchase_eok > 0:
-        st.caption(f"입력 정보: **{purchase_date_str} 매수가 {format_price_kor(purchase_eok)}**")
-
-    manual_current_eok = st.number_input(
-        "현재 보유 주택 시세 직접 입력 (억 원)",
-        min_value=0.0,
-        max_value=500.0,
-        value=float(st.session_state.get("manual_my_current_price_man", 0) or 0) / 10000,
-        step=0.1,
-        format="%.1f",
-        help="KB 검색이 어렵거나 보유 주택을 빠르게 비교하고 싶을 때 직접 입력하세요.",
-        key="manual_current_home_price",
-    )
-    if manual_current_eok > 0:
-        st.session_state["manual_my_current_price_man"] = round(manual_current_eok * 10000)
-        st.caption(f"현재 시세 직접 입력: **{format_price_kor(manual_current_eok)}**")
+    st.caption("필수 프로파일은 1번 탭에서 입력합니다. 보유 주택 정보는 선택 입력입니다.")
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -446,7 +344,7 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-tab1, tab2, tab3 = st.tabs(["🔍 단지 탐색", "👤 내 투자 프로파일", "📊 AI 종합 분석"])
+tab2, tab1, tab3 = st.tabs(["👤 내 투자 프로파일", "🔍 단지 탐색", "📊 AI 종합 분석"])
 
 # ── 공통 데이터 · 컬럼 감지 (탭 전체에서 공유) ─────────────────────────
 df_all = _cached_load_kb_apt_data()
@@ -478,9 +376,9 @@ with tab1:
             """
             **이 서비스를 사용하는 방법**
 
-            1. **사이드바**에서 현재 보유한 아파트를 검색하고 면적·매수가를 입력하세요.
-            2. **Tab 2 (투자 프로파일)**에서 가구 형태, 소득, 자본금 등을 입력하고 저장하세요.
-            3. **Tab 1 (단지 탐색)**에서 필터를 적용해 갈아타기 후보 단지를 탐색하세요.
+            1. **Tab 1 (투자 프로파일)**에서 가구 형태, 소득, 자본금 등을 입력하고 저장하세요.
+            2. 보유 주택을 함께 비교하고 싶다면 같은 탭의 **선택 입력**을 펼쳐 입력하세요.
+            3. **Tab 2 (단지 탐색)**에서 필터를 적용해 갈아타기 후보 단지를 탐색하세요.
             4. 원하는 단지를 클릭하면 자동으로 **대출 규제·자금 분석**이 수행됩니다.
             5. **Tab 3 (AI 종합 분석)**에서 ML 가격 예측과 AI 어드바이저 분석을 확인하세요.
 
@@ -656,12 +554,25 @@ with tab1:
         if new_scores:
             merged_scores = {**score_map, **new_scores}
             st.session_state["candidate_growth_scores"] = merged_scores
+            st.session_state["show_scored_candidates_only_toggle"] = True
             df_filt = _apply_growth_scores(df_filt.drop(columns=["AI예측상승률(1년)"], errors="ignore"), price_col, merged_scores)
             st.success(f"{len(new_scores)}개 후보의 AI 상승률을 계산했습니다.")
         else:
             st.warning("현재 조건에서 계산 가능한 후보를 찾지 못했습니다.")
 
-    sort_options = ["추천순", "AI예측(1년) 높은 순", "검색유사도 높은 순", "필요자기자금 낮은 순", "매매시세 낮은 순", "매매시세 높은 순", "월간매매변동률 높은 순"]
+    has_scored_candidates = "AI예측상승률(1년)" in df_filt.columns and df_filt["AI예측상승률(1년)"].notna().any()
+    if has_scored_candidates:
+        if "show_scored_candidates_only_toggle" not in st.session_state:
+            st.session_state["show_scored_candidates_only_toggle"] = True
+        show_scored_only = st.toggle(
+            "AI 계산 후보만 보기",
+            key="show_scored_candidates_only_toggle",
+            help="정렬을 바꿔도 방금 계산한 후보만 비교하고 싶을 때 켜두세요.",
+        )
+        if show_scored_only:
+            df_filt = df_filt[df_filt["AI예측상승률(1년)"].notna()].copy()
+
+    sort_options = ["추천순", "AI예측(1년) 높은 순", "이름이 비슷한 순", "필요자기자금 낮은 순", "매매시세 낮은 순", "매매시세 높은 순", "월간매매변동률 높은 순"]
     sort_choice = st.segmented_control(
         "정렬 기준",
         options=sort_options,
@@ -672,7 +583,7 @@ with tab1:
         df_filt = df_filt.sort_values("필요자기자금(만원)", ascending=True)
     elif sort_choice == "AI예측(1년) 높은 순" and "AI예측상승률(1년)" in df_filt.columns:
         df_filt = df_filt.sort_values("AI예측상승률(1년)", ascending=False, na_position="last")
-    elif sort_choice == "검색유사도 높은 순" and "검색유사도" in df_filt.columns:
+    elif sort_choice == "이름이 비슷한 순" and "검색유사도" in df_filt.columns:
         df_filt = df_filt.sort_values("검색유사도", ascending=False)
     elif sort_choice == "매매시세 낮은 순" and price_col:
         df_filt = df_filt.sort_values(price_col, ascending=True)
@@ -773,6 +684,37 @@ with tab1:
                 else:
                     st.info("시세 정보가 없어 대출 분석을 수행할 수 없습니다.")
 
+        if target_price_man > 0:
+            st.markdown("##### 선택 단지 AI 예측")
+            try:
+                with st.spinner("선택 단지의 1년·3년·5년 예측을 불러오는 중입니다..."):
+                    horizon_result = _get_target_horizon_predictions(target_row, price_col)
+                prediction_items = (horizon_result or {}).get("predictions", [])
+                if prediction_items:
+                    pred_cols = st.columns(len(prediction_items))
+                    for pred, pred_col in zip(prediction_items, pred_cols):
+                        months = int(pred.get("horizon_months", 0))
+                        label = {12: "1년", 36: "3년", 60: "5년"}.get(months, f"{months}개월")
+                        growth_pct = float(pred.get("predicted_growth_pct", 0.0))
+                        estimated_price = int(target_price_man * (1 + growth_pct / 100))
+                        interval = pred.get("prediction_interval_p80", {}) or {}
+                        half_width = interval.get("half_width_pctp")
+                        confidence = _confidence_label(pred.get("confidence"))
+                        with pred_col:
+                            with st.container(border=True):
+                                st.markdown(f"**{label} 후**")
+                                st.metric("예상 상승률", f"{growth_pct:+.1f}%")
+                                st.metric("추정 시세", man_to_eok_str(estimated_price))
+                                if half_width is not None:
+                                    st.caption(f"신뢰도 {confidence} · P80 ±{float(half_width):.1f}%p")
+                                else:
+                                    st.caption(f"신뢰도 {confidence}")
+                    st.caption(f"모델: {_display_text((horizon_result or {}).get('model_version'), '모델 확인 필요')}")
+                else:
+                    st.info("선택 단지 예측값을 계산할 수 없습니다.")
+            except Exception as e:
+                st.warning(f"선택 단지 예측을 불러오지 못했습니다: {e}")
+
         # ── 선택 단지 시계열 추이 ────────────────────────────────────
         complex_id = target_row.get("단지ID")
         area_serial_no = target_row.get("면적일련번호")
@@ -858,8 +800,134 @@ with tab1:
 # Tab 2: 투자 프로파일 입력
 # ──────────────────────────────────────────────────────────────────────
 with tab2:
-    st.subheader("👤 투자 유형 프로파일 입력")
-    st.markdown("아래 정보를 입력하고 저장하면 Tab 3에서 개인화된 AI 분석이 시작됩니다.")
+    st.subheader("👤 내 투자 프로파일")
+    st.markdown("가구 형태, 자산, 소득, 기존 대출만 입력해도 단지별 대출 한도와 AI 분석을 볼 수 있습니다.")
+
+    with st.expander("선택 입력: 보유 주택 정보와 매수 이력", expanded=False):
+        st.caption("갈아타기 리포트에서 보유 주택 매도 후 자기자본과 대상 단지 필요자금을 비교할 때만 사용합니다.")
+        home_col1, home_col2 = st.columns(2)
+
+        with home_col1:
+            search_keyword = st.text_input(
+                "내 아파트 이름",
+                placeholder="예: 래미안 대치",
+                key="search_keyword_input",
+            )
+
+            suggestions = []
+            if search_keyword.strip():
+                with st.spinner("단지를 검색 중..."):
+                    try:
+                        suggestions = fetch_search_suggestions(search_keyword.strip())
+                    except Exception as e:
+                        st.error(f"단지 검색 실패: {e}")
+
+            if suggestions:
+                labels = [s["label"] for s in suggestions]
+                sel_label = st.selectbox("검색된 단지 선택", options=labels, key="complex_select")
+                sel_item = next((s for s in suggestions if s["label"] == sel_label), None)
+
+                if st.button("✅ 이 단지로 확정", width="stretch"):
+                    if sel_item:
+                        try:
+                            with st.spinner("KB부동산에서 단지 정보를 가져오는 중..."):
+                                complex_meta = fetch_complex_id(sel_item["textTemp"])
+
+                            if not complex_meta or not complex_meta.get("complex_id"):
+                                st.error("단지 ID를 찾을 수 없습니다.")
+                            else:
+                                cid = complex_meta["complex_id"]
+                                with st.spinner("KB 시세를 불러오는 중..."):
+                                    prices = fetch_complex_price(cid)
+
+                                st.session_state.update({
+                                    "my_complex_id":    cid,
+                                    "my_name":          complex_meta["name"],
+                                    "my_addr":          complex_meta["addr"],
+                                    "my_units":         complex_meta["units"],
+                                    "my_completion":    complex_meta["completion"],
+                                    "my_prices":        prices,
+                                    "my_current_price": prices[0].get("매매일반거래가", 0) if prices else 0,
+                                })
+                                st.success("✅ 단지 정보 확정!")
+                        except Exception as e:
+                            st.error(f"단지 정보 조회 실패: {e}")
+            elif search_keyword.strip():
+                st.warning("검색 결과가 없습니다.")
+
+            if st.session_state.get("my_name"):
+                with st.container(border=True):
+                    st.markdown(f"**{st.session_state['my_name']}**")
+                    st.caption(st.session_state.get("my_addr", ""))
+
+                    c1, c2 = st.columns(2)
+                    with c1:
+                        units_value = _display_text(st.session_state.get("my_units"), "확인 전")
+                        st.metric("세대수", f"{units_value}세대" if units_value != "확인 전" else units_value)
+                    with c2:
+                        st.metric("입주년월", _display_text(st.session_state.get("my_completion"), "확인 전"))
+
+                    prices = st.session_state.get("my_prices", [])
+                    if prices:
+                        price_map = {
+                            f"{p.get('공급면적평', '?')}평  ·  {man_to_eok_str(int(p.get('매매일반거래가', 0) or 0))}":
+                            int(p.get("매매일반거래가", 0) or 0)
+                            for p in prices
+                        }
+                        chosen = st.selectbox("면적 선택 (KB시세 연동)", list(price_map.keys()))
+                        st.session_state["my_current_price"] = price_map[chosen]
+                        st.metric("현재 KB매매시세", man_to_eok_str(st.session_state["my_current_price"]))
+
+        with home_col2:
+            p_col1, p_col2 = st.columns(2)
+            with p_col1:
+                purchase_year = st.selectbox(
+                    "매수 연도",
+                    options=list(range(2000, 2027)),
+                    index=23,
+                    format_func=lambda y: f"{y}년",
+                    key="purchase_year",
+                )
+            with p_col2:
+                purchase_month = st.selectbox(
+                    "매수 월",
+                    options=list(range(1, 13)),
+                    index=3,
+                    format_func=lambda m: f"{m}월",
+                    key="purchase_month",
+                )
+
+            purchase_date_str = f"{purchase_year}년 {purchase_month}월"
+
+            purchase_eok = st.number_input(
+                f"{purchase_date_str} 매수가 (억 원)",
+                min_value=0.0,
+                max_value=500.0,
+                value=7.4,
+                step=0.1,
+                format="%.1f",
+                key="purchase_eok_value",
+            )
+            my_purchase_price_man = round(purchase_eok * 10000)
+
+            if purchase_eok > 0:
+                st.caption(f"입력 정보: **{purchase_date_str} 매수가 {format_price_kor(purchase_eok)}**")
+
+            manual_current_eok = st.number_input(
+                "현재 보유 주택 시세 직접 입력 (억 원)",
+                min_value=0.0,
+                max_value=500.0,
+                value=float(st.session_state.get("manual_my_current_price_man", 0) or 0) / 10000,
+                step=0.1,
+                format="%.1f",
+                help="KB 검색이 어렵거나 보유 주택을 빠르게 비교하고 싶을 때 직접 입력하세요.",
+                key="manual_current_home_price",
+            )
+            st.session_state["manual_my_current_price_man"] = round(manual_current_eok * 10000)
+            if manual_current_eok > 0:
+                st.caption(f"현재 시세 직접 입력: **{format_price_kor(manual_current_eok)}**")
+
+    st.markdown("---")
 
     # 기존 저장된 값을 기본값으로 로드
     saved_profile = st.session_state.get("user_profile", {})
@@ -961,10 +1029,10 @@ with tab3:
     # ── 사전 조건 안내 ───────────────────────────────────────────────
     prereq_ok = True
     if not user_profile:
-        st.info("💡 **Tab 2**에서 투자 프로파일을 먼저 입력해 주세요.")
+        st.info("💡 **Tab 1**에서 투자 프로파일을 먼저 입력해 주세요.")
         prereq_ok = False
     if not target_row:
-        st.info("💡 **Tab 1**에서 타겟 아파트를 먼저 선택해 주세요.")
+        st.info("💡 **Tab 2**에서 타겟 아파트를 먼저 선택해 주세요.")
         prereq_ok = False
     if not api_key:
         st.warning("⚠️ `.env`의 OPENAI_API_KEY가 없어 AI 어드바이저만 비활성화됩니다.")
@@ -1232,7 +1300,7 @@ with tab3:
                     delta_color="normal" if after_move_gap >= 0 else "inverse",
                 )
         else:
-            st.info("보유 주택 시세를 사이드바에서 검색하거나 직접 입력하면 갈아타기 리포트가 표시됩니다.")
+            st.info("보유 주택 시세를 내 투자 프로파일 탭에서 검색하거나 직접 입력하면 갈아타기 리포트가 표시됩니다.")
 
 
 # ── 푸터 ─────────────────────────────────────────────────────────────

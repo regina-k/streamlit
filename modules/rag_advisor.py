@@ -54,6 +54,7 @@ def get_loan_advice(
     ml_prediction = ml_prediction or kwargs.get("ml_prediction") or {}
     my_info = kwargs.get("my_info") or {}
     loan_summary = kwargs.get("loan_summary") or {}
+    user_question = str(kwargs.get("question") or "").strip()
 
     normalized_target = {
         "name": target_apt.get("name", "-"),
@@ -72,6 +73,8 @@ def get_loan_advice(
         retriever = init_vector_store()
         chain = _build_rag_chain(retriever)
         query = _build_query(user_profile, normalized_target, normalized_prediction)
+        if user_question:
+            query = f"{query}\n\n■ 사용자 추가 질문\n{user_question}"
         return chain.invoke(query)
     except Exception as exc:
         return _fallback_response(user_profile, normalized_target, normalized_prediction, loan_summary, exc)

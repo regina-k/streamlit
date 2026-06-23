@@ -90,6 +90,7 @@ def recommend_loan_products(
             "description": "일반 아파트 매수 목적의 기본 주택담보대출 후보입니다.",
             "rate": "영업점 확인",
             "limit": limit,
+            "url": "https://m.shinhan.com/mw/fin/pg/PR0502S0100F01?hwno=&mid=220011114004&pid=S614221100&type=app",
         }
     ]
 
@@ -101,6 +102,7 @@ def recommend_loan_products(
                 "description": "가구 유형 우대 가능성을 우선 확인할 만한 후보입니다.",
                 "rate": "우대금리 가능",
                 "limit": limit,
+                "url": "https://bank.shinhan.com/index.jsp?cr=020305010000",
             },
         )
 
@@ -111,6 +113,7 @@ def recommend_loan_products(
                 "description": "가격과 소득 조건 충족 여부를 별도 확인할 가치가 있습니다.",
                 "rate": "상품별 상이",
                 "limit": min(limit, 50_000),
+                "url": "https://bank.shinhan.com/index.jsp?cr=020305010000&pcd=S632121500",
             }
         )
 

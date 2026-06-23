@@ -7,6 +7,8 @@ UI 오케스트레이터 — 비즈니스 로직은 modules/ 에 위임한다.
 """
 
 import os
+import re
+from difflib import SequenceMatcher
 
 import pandas as pd
 import streamlit as st
@@ -19,7 +21,7 @@ except ImportError:
 
 from config import HOUSEHOLD_TYPES, PURPOSE_OPTIONS, AREA_TYPES
 from modules.kb_api import fetch_search_suggestions, fetch_complex_id, fetch_complex_price
-from modules.data_loader import load_kb_apt_data, filter_apartments
+from modules.data_loader import load_kb_apt_data, load_ml_timeseries, filter_apartments
 from modules.utils import format_price_kor, man_to_eok_str
 from modules.loan_calculator import (
     calc_loan_limit,
@@ -28,7 +30,7 @@ from modules.loan_calculator import (
     calc_cash_needed,
     recommend_loan_products,
 )
-from modules.ml_predictor import predict_price_growth
+from modules.ml_predictor import predict_apartment_growth_horizons, predict_price_growth
 from modules.rag_advisor import get_loan_advice
 
 # ── 페이지 설정 ──────────────────────────────────────────────────────────
@@ -39,10 +41,252 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
+st.markdown(
+    """
+    <style>
+    :root {
+        --app-primary: #2563eb;
+        --app-ink: #111827;
+        --app-muted: #6b7280;
+        --app-line: #e5e7eb;
+    }
+    .stApp {
+        background: #ffffff;
+        color: var(--app-ink);
+    }
+    [data-testid="stSidebar"] {
+        background: #ffffff;
+        border-right: 1px solid var(--app-line);
+    }
+    [data-testid="stMetric"] {
+        background: #ffffff;
+        border: 1px solid var(--app-line);
+        border-radius: 8px;
+        padding: 14px 16px;
+        box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+    }
+    div[data-testid="stTabs"] button[role="tab"] {
+        font-weight: 700;
+    }
+    .ux-hero {
+        border: 1px solid var(--app-line);
+        border-radius: 8px;
+        padding: 18px 20px;
+        margin: 2px 0 18px;
+        background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
+    }
+    .ux-hero strong {
+        color: var(--app-primary);
+    }
+    .ux-note {
+        color: var(--app-muted);
+        font-size: 0.9rem;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
 # ── 캐시 래퍼 ────────────────────────────────────────────────────────────
 @st.cache_data(show_spinner="CSV 데이터를 불러오는 중...")
 def _cached_load_kb_apt_data() -> pd.DataFrame:
     return load_kb_apt_data()
+
+
+@st.cache_data(show_spinner="시계열 데이터를 불러오는 중...")
+def _cached_load_ml_timeseries() -> pd.DataFrame:
+    return load_ml_timeseries()
+
+
+def _display_text(value, fallback: str = "데이터 없음") -> str:
+    if value is None:
+        return fallback
+    if isinstance(value, float) and pd.isna(value):
+        return fallback
+    text = str(value).strip()
+    return text if text and text not in {"-", "nan", "None"} else fallback
+
+
+def _positive_numeric_series(df: pd.DataFrame, column: str | None) -> pd.Series:
+    if df is None or df.empty or not column or column not in df.columns:
+        return pd.Series(dtype=float)
+    values = pd.to_numeric(df[column], errors="coerce")
+    return values[values.gt(0)]
+
+
+def _confidence_label(value: str | None) -> str:
+    labels = {"high": "높음", "medium": "보통", "low": "낮음"}
+    return labels.get(str(value or "").lower(), "확인 필요")
+
+
+def _normalize_search_text(value: str) -> str:
+    text = str(value or "").lower()
+    replacements = {
+        "레미안": "래미안",
+        "레미": "래미",
+        "힐스테잇": "힐스테이트",
+        "아이파크": "아이파크",
+    }
+    for src, dst in replacements.items():
+        text = text.replace(src, dst)
+    return re.sub(r"[^0-9a-z가-힣]", "", text)
+
+
+def _name_match_score(query: str, name: str) -> float:
+    query_norm = _normalize_search_text(query)
+    name_norm = _normalize_search_text(name)
+    if not query_norm or not name_norm:
+        return 0.0
+    if query_norm in name_norm:
+        return 1.0
+    if len(query_norm) < 3:
+        return 0.0
+    window_scores = [
+        SequenceMatcher(None, query_norm, name_norm[i : i + len(query_norm)]).ratio()
+        for i in range(0, max(len(name_norm) - len(query_norm) + 1, 1))
+    ]
+    return max([SequenceMatcher(None, query_norm, name_norm).ratio(), *window_scores])
+
+
+def _apply_name_search(df: pd.DataFrame, keyword: str | None) -> pd.DataFrame:
+    keyword = str(keyword or "").strip()
+    if not keyword or df is None or df.empty:
+        return df
+
+    name_col = "아파트명" if "아파트명" in df.columns else "단지명"
+    if name_col not in df.columns:
+        return df
+
+    result = df.copy()
+    names = result[name_col].fillna("").astype(str)
+    normalized_query = _normalize_search_text(keyword)
+    normalized_names = names.apply(_normalize_search_text)
+    exact_mask = names.str.contains(keyword, case=False, na=False, regex=False)
+    normalized_mask = normalized_names.str.contains(normalized_query, na=False, regex=False)
+
+    if exact_mask.any():
+        result = result.loc[exact_mask].copy()
+        result["검색유사도"] = 100
+        return result
+    if normalized_mask.any():
+        result = result.loc[normalized_mask].copy()
+        result["검색유사도"] = 98
+        return result.sort_values([name_col], ascending=True)
+
+    scores = names.apply(lambda name: _name_match_score(keyword, name))
+    keep_mask = scores.ge(0.72)
+    result = result.loc[keep_mask].copy()
+    if result.empty:
+        return result
+    result["검색유사도"] = (scores.loc[result.index] * 100).round(0).astype(int)
+    return result.sort_values(["검색유사도", name_col], ascending=[False, True])
+
+
+def _prepare_apartment_results(df: pd.DataFrame, price_column: str | None, user_cash_man: int) -> pd.DataFrame:
+    if df is None or df.empty:
+        return pd.DataFrame()
+    result = df.copy()
+    if price_column and price_column in result.columns:
+        prices = pd.to_numeric(result[price_column], errors="coerce").fillna(0)
+        result["예상대출한도(만원)"] = prices.apply(calc_loan_limit).astype(int)
+        result["필요자기자금(만원)"] = (prices - result["예상대출한도(만원)"]).clip(lower=0).astype(int)
+        result["자금여유(만원)"] = int(user_cash_man or 0) - result["필요자기자금(만원)"]
+    return result
+
+
+def _candidate_key(row: pd.Series | dict, price_column: str | None) -> str:
+    complex_id = row.get("단지ID", "")
+    area_serial_no = row.get("면적일련번호", "")
+    price = row.get(price_column, "") if price_column else ""
+    return f"{complex_id}|{area_serial_no}|{price}"
+
+
+def _apply_growth_scores(df: pd.DataFrame, price_column: str | None, score_map: dict[str, float]) -> pd.DataFrame:
+    if df is None or df.empty or not score_map:
+        return df
+    result = df.copy()
+    result["AI예측상승률(1년)"] = [
+        score_map.get(_candidate_key(row, price_column))
+        for _, row in result.iterrows()
+    ]
+    return result
+
+
+def _score_growth_candidates(df: pd.DataFrame, price_column: str | None, limit: int = 30) -> dict[str, float]:
+    scores: dict[str, float] = {}
+    if df is None or df.empty or not price_column:
+        return scores
+
+    required = {"단지ID", "면적일련번호", price_column}
+    if not required.issubset(df.columns):
+        return scores
+
+    for _, row in df.head(limit).iterrows():
+        key = _candidate_key(row, price_column)
+        try:
+            result = predict_apartment_growth_horizons(
+                complex_id=row.get("단지ID"),
+                area_serial_no=row.get("면적일련번호"),
+                current_price_manwon=row.get(price_column),
+                horizons=("12m",),
+            )
+            scores[key] = float(result["predictions"][0]["predicted_growth_pct"])
+        except Exception:
+            continue
+    return scores
+
+
+def _format_result_table(df: pd.DataFrame, price_column: str | None) -> pd.DataFrame:
+    if df is None or df.empty:
+        return pd.DataFrame()
+
+    display = pd.DataFrame(index=df.index)
+    display["_row_id"] = range(len(df))
+    column_map = [
+        ("단지명", "단지명"),
+        ("검색유사도", "검색유사도"),
+        ("시군구", "지역"),
+        ("동", "동"),
+        ("세대수", "세대수"),
+        ("공급면적(평)", "공급면적"),
+        ("전용면적(평)", "전용면적"),
+        (price_column, "매매시세"),
+        ("필요자기자금(만원)", "필요자기자금"),
+        ("자금여유(만원)", "자금여유"),
+        ("AI예측상승률(1년)", "AI예측(1년)"),
+        ("월간매매변동률", "월간매매변동률"),
+    ]
+    for source, label in column_map:
+        if source and source in df.columns:
+            display[label] = df[source]
+
+    for money_col in ["매매시세", "필요자기자금", "자금여유"]:
+        if money_col in display.columns:
+            display[money_col] = display[money_col].apply(
+                lambda v: man_to_eok_str(v) if pd.notna(v) else "데이터 없음"
+            )
+    for area_col in ["공급면적", "전용면적"]:
+        if area_col in display.columns:
+            display[area_col] = display[area_col].apply(
+                lambda v: f"{float(v):.1f}평" if pd.notna(v) else "데이터 없음"
+            )
+    if "세대수" in display.columns:
+        display["세대수"] = display["세대수"].apply(
+            lambda v: f"{int(v):,}세대" if pd.notna(v) else "데이터 없음"
+        )
+    if "검색유사도" in display.columns:
+        display["검색유사도"] = display["검색유사도"].apply(
+            lambda v: f"{int(v)}점" if pd.notna(v) else "데이터 없음"
+        )
+    if "AI예측(1년)" in display.columns:
+        display["AI예측(1년)"] = display["AI예측(1년)"].apply(
+            lambda v: f"{float(v):+.1f}%" if pd.notna(v) else "계산 전"
+        )
+    if "월간매매변동률" in display.columns:
+        display["월간매매변동률"] = display["월간매매변동률"].apply(
+            lambda v: f"{float(v):+.2f}%" if pd.notna(v) else "데이터 없음"
+        )
+    return display
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -53,23 +297,13 @@ with st.sidebar:
     st.title("🏠 내 집 정보 입력")
     st.markdown("---")
 
-    # ── OpenAI API Key ───────────────────────────────────────────────
-    st.subheader("🔑 OpenAI API Key")
     env_key = os.getenv("OPENAI_API_KEY", "").strip()
-
-    if env_key:
-        st.info("ℹ️ 환경변수에서 API Key를 읽었습니다. 아래에서 덮어쓸 수 있습니다.")
-    else:
-        st.warning("⚠️ 환경변수에서 Key를 찾지 못했습니다. 직접 입력해 주세요.")
-
-    manual_key = st.text_input(
-        "OpenAI API Key",
-        type="password",
-        placeholder="sk-...",
-        key="api_key_input",
-    ).strip()
-
-    api_key = manual_key if manual_key else env_key
+    api_key = env_key
+    with st.expander("AI 연결 상태", expanded=False):
+        if env_key:
+            st.success("환경변수의 OpenAI API Key로 AI 분석을 사용할 수 있습니다.")
+        else:
+            st.warning("OPENAI_API_KEY가 없어 AI 어드바이저만 비활성화됩니다.")
     st.markdown("---")
 
     # ── STEP 1: 내 아파트 검색 ──────────────────────────────────────
@@ -94,7 +328,7 @@ with st.sidebar:
         sel_label = st.selectbox("검색된 단지 선택", options=labels, key="complex_select")
         sel_item  = next((s for s in suggestions if s["label"] == sel_label), None)
 
-        if st.button("✅ 이 단지로 확정", use_container_width=True):
+        if st.button("✅ 이 단지로 확정", width="stretch"):
             if sel_item:
                 try:
                     with st.spinner("KB부동산에서 단지 정보를 가져오는 중..."):
@@ -131,9 +365,10 @@ with st.sidebar:
 
             c1, c2 = st.columns(2)
             with c1:
-                st.metric("세대수",   f"{st.session_state.get('my_units', '-')}세대")
+                units_value = _display_text(st.session_state.get("my_units"), "확인 전")
+                st.metric("세대수", f"{units_value}세대" if units_value != "확인 전" else units_value)
             with c2:
-                st.metric("입주년월", st.session_state.get("my_completion", "-"))
+                st.metric("입주년월", _display_text(st.session_state.get("my_completion"), "확인 전"))
 
             prices = st.session_state.get("my_prices", [])
             if prices:
@@ -180,12 +415,36 @@ with st.sidebar:
     if purchase_eok > 0:
         st.caption(f"입력 정보: **{purchase_date_str} 매수가 {format_price_kor(purchase_eok)}**")
 
+    manual_current_eok = st.number_input(
+        "현재 보유 주택 시세 직접 입력 (억 원)",
+        min_value=0.0,
+        max_value=500.0,
+        value=float(st.session_state.get("manual_my_current_price_man", 0) or 0) / 10000,
+        step=0.1,
+        format="%.1f",
+        help="KB 검색이 어렵거나 보유 주택을 빠르게 비교하고 싶을 때 직접 입력하세요.",
+        key="manual_current_home_price",
+    )
+    if manual_current_eok > 0:
+        st.session_state["manual_my_current_price_man"] = round(manual_current_eok * 10000)
+        st.caption(f"현재 시세 직접 입력: **{format_price_kor(manual_current_eok)}**")
+
 
 # ═══════════════════════════════════════════════════════════════════════
 # 메인 화면 — 3개 탭
 # ═══════════════════════════════════════════════════════════════════════
 
 st.title("🏙️ AI 기반 부동산 분석 & 대출 제안 서비스")
+st.markdown(
+    """
+    <div class="ux-hero">
+      <strong>갈아타기 후보를 숫자로 비교하세요.</strong><br/>
+      KB 시세, 대출 여력, ML 상승률 예측을 한 흐름에서 확인하도록 정리했습니다.
+      <div class="ux-note">흰색 화면을 유지하면서 핵심 지표가 먼저 보이도록 구성했습니다.</div>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
 
 tab1, tab2, tab3 = st.tabs(["🔍 단지 탐색", "👤 내 투자 프로파일", "📊 AI 종합 분석"])
 
@@ -237,23 +496,24 @@ with tab1:
         with m1:
             st.metric("📦 총 단지 수", f"{total_count:,}개")
         with m2:
-            if price_col:
-                avg_price = df_all[price_col].dropna().mean()
+            positive_prices = _positive_numeric_series(df_all, price_col)
+            if price_col and not positive_prices.empty:
+                avg_price = positive_prices.mean()
                 st.metric("📊 평균 시세", man_to_eok_str(int(avg_price)))
             else:
-                st.metric("📊 평균 시세", "-")
+                st.metric("📊 평균 시세", "데이터 없음")
         with m3:
-            if price_col:
-                min_price = df_all[price_col].dropna().min()
+            if price_col and not positive_prices.empty:
+                min_price = positive_prices.min()
                 st.metric("📉 최저 시세", man_to_eok_str(int(min_price)))
             else:
-                st.metric("📉 최저 시세", "-")
+                st.metric("📉 최저 시세", "데이터 없음")
         with m4:
-            if price_col:
-                max_price = df_all[price_col].dropna().max()
+            if price_col and not positive_prices.empty:
+                max_price = positive_prices.max()
                 st.metric("📈 최고 시세", man_to_eok_str(int(max_price)))
             else:
-                st.metric("📈 최고 시세", "-")
+                st.metric("📈 최고 시세", "데이터 없음")
     else:
         st.warning("⚠️ 데이터를 불러오지 못했습니다. CSV 파일 경로를 확인하세요.")
 
@@ -292,14 +552,18 @@ with tab1:
         with f_col4:
             # 시세 범위 슬라이더
             if price_col and df_all is not None:
-                price_min_raw = int(df_all[price_col].dropna().min())
-                price_max_raw = int(df_all[price_col].dropna().max())
+                valid_price_values = _positive_numeric_series(df_all, price_col)
+                if valid_price_values.empty:
+                    price_min_raw, price_max_raw = 0, 999_999_999
+                else:
+                    price_min_raw = int(valid_price_values.min())
+                    price_max_raw = int(valid_price_values.max())
                 price_range = st.slider(
                     "시세 범위 (만 원)",
                     min_value=price_min_raw,
                     max_value=price_max_raw,
                     value=(price_min_raw, price_max_raw),
-                    step=1000,
+                    step=100,
                     format="%d만",
                     key="filter_price_range",
                 )
@@ -316,7 +580,7 @@ with tab1:
                     min_value=units_min_raw,
                     max_value=units_max_raw,
                     value=(units_min_raw, units_max_raw),
-                    step=50,
+                    step=1,
                     key="filter_units_range",
                 )
             else:
@@ -331,7 +595,6 @@ with tab1:
 
     # ── filter_apartments 호출 ───────────────────────────────────────
     filter_kwargs = {
-        "keyword":     keyword_filter if keyword_filter.strip() else None,
         "price_range": price_range,
         "units_range": units_range,
     }
@@ -359,13 +622,86 @@ with tab1:
                 (df_filt[price_col] <= price_range[1])
             ]
 
+    df_filt = _apply_name_search(df_filt, keyword_filter)
+
+    profile_for_filter = st.session_state.get("user_profile", {})
+    user_cash_man = round(profile_for_filter.get("available_cash_eok", 0) * 10000) if profile_for_filter else 0
+    df_filt = _prepare_apartment_results(df_filt, price_col, user_cash_man)
+
+    score_map = st.session_state.get("candidate_growth_scores", {})
+    df_filt = _apply_growth_scores(df_filt, price_col, score_map)
+
+    score_candidate_limit = 5
+    score_ready = df_filt is not None and 0 < len(df_filt) <= 1500
+    score_col1, score_col2 = st.columns([2, 3])
+    with score_col1:
+        score_requested = st.button(
+            "AI 상승률 계산",
+            width="stretch",
+            key="score_candidate_growth",
+            disabled=not score_ready,
+        )
+    with score_col2:
+        if score_ready:
+            st.caption(
+                f"현재 필터 결과의 상위 {score_candidate_limit}개 단지/평형을 계산합니다. "
+                "첫 계산은 모델 로딩 때문에 20~30초 걸릴 수 있습니다."
+            )
+        else:
+            st.caption("후보가 1,500개 이하가 되도록 지역·동·단지명·가격 필터를 먼저 좁히면 AI 상승률 계산이 열립니다.")
+
+    if score_requested:
+        with st.spinner("후보별 1년 상승률을 계산하는 중입니다..."):
+            new_scores = _score_growth_candidates(df_filt, price_col, limit=score_candidate_limit)
+        if new_scores:
+            merged_scores = {**score_map, **new_scores}
+            st.session_state["candidate_growth_scores"] = merged_scores
+            df_filt = _apply_growth_scores(df_filt.drop(columns=["AI예측상승률(1년)"], errors="ignore"), price_col, merged_scores)
+            st.success(f"{len(new_scores)}개 후보의 AI 상승률을 계산했습니다.")
+        else:
+            st.warning("현재 조건에서 계산 가능한 후보를 찾지 못했습니다.")
+
+    sort_options = ["추천순", "AI예측(1년) 높은 순", "검색유사도 높은 순", "필요자기자금 낮은 순", "매매시세 낮은 순", "매매시세 높은 순", "월간매매변동률 높은 순"]
+    sort_choice = st.segmented_control(
+        "정렬 기준",
+        options=sort_options,
+        default="추천순",
+        key="result_sort_order",
+    )
+    if sort_choice == "필요자기자금 낮은 순" and "필요자기자금(만원)" in df_filt.columns:
+        df_filt = df_filt.sort_values("필요자기자금(만원)", ascending=True)
+    elif sort_choice == "AI예측(1년) 높은 순" and "AI예측상승률(1년)" in df_filt.columns:
+        df_filt = df_filt.sort_values("AI예측상승률(1년)", ascending=False, na_position="last")
+    elif sort_choice == "검색유사도 높은 순" and "검색유사도" in df_filt.columns:
+        df_filt = df_filt.sort_values("검색유사도", ascending=False)
+    elif sort_choice == "매매시세 낮은 순" and price_col:
+        df_filt = df_filt.sort_values(price_col, ascending=True)
+    elif sort_choice == "매매시세 높은 순" and price_col:
+        df_filt = df_filt.sort_values(price_col, ascending=False)
+    elif sort_choice == "월간매매변동률 높은 순" and "월간매매변동률" in df_filt.columns:
+        df_filt = df_filt.sort_values("월간매매변동률", ascending=False)
+    elif keyword_filter.strip() and "검색유사도" in df_filt.columns:
+        sort_cols = ["검색유사도"]
+        ascending = [False]
+        if "자금여유(만원)" in df_filt.columns:
+            sort_cols.append("자금여유(만원)")
+            ascending.append(False)
+        df_filt = df_filt.sort_values(sort_cols, ascending=ascending)
+    elif "자금여유(만원)" in df_filt.columns and price_col:
+        df_filt = df_filt.assign(_affordable=df_filt["자금여유(만원)"] >= 0).sort_values(
+            ["_affordable", "자금여유(만원)", price_col],
+            ascending=[False, False, True],
+        ).drop(columns=["_affordable"])
+
+    df_filt = df_filt.reset_index(drop=True)
     st.caption(f"🏘️ 검색 결과: **{len(df_filt):,}개** 단지")
 
     # ── 데이터 테이블 (선택 가능) ────────────────────────────────────
     if df_filt is not None and not df_filt.empty:
+        display_df = _format_result_table(df_filt, price_col)
         event = st.dataframe(
-            df_filt.reset_index(drop=True),
-            use_container_width=True,
+            display_df.drop(columns=["_row_id"], errors="ignore"),
+            width="stretch",
             height=320,
             on_select="rerun",
             selection_mode="single-row",
@@ -375,7 +711,8 @@ with tab1:
         # 선택된 행 추출
         selected_rows = event.selection.get("rows", []) if hasattr(event, "selection") else []
         if selected_rows:
-            target_row = df_filt.iloc[selected_rows[0]].to_dict()
+            source_idx = int(display_df.iloc[selected_rows[0]].get("_row_id", selected_rows[0]))
+            target_row = df_filt.iloc[source_idx].to_dict()
             st.session_state["selected_target_row"] = target_row
         else:
             target_row = st.session_state.get("selected_target_row")
@@ -436,8 +773,39 @@ with tab1:
                 else:
                     st.info("시세 정보가 없어 대출 분석을 수행할 수 없습니다.")
 
+        # ── 선택 단지 시계열 추이 ────────────────────────────────────
+        complex_id = target_row.get("단지ID")
+        area_serial_no = target_row.get("면적일련번호")
+        if complex_id is not None and area_serial_no is not None:
+            try:
+                ts_df = _cached_load_ml_timeseries()
+                if {"단지ID", "면적일련번호", "기준년월"}.issubset(ts_df.columns):
+                    ts_slice = ts_df[
+                        (ts_df["단지ID"].astype(str) == str(int(float(complex_id))))
+                        & (ts_df["면적일련번호"].astype(str) == str(int(float(area_serial_no))))
+                    ].copy()
+                    if not ts_slice.empty:
+                        ts_slice["기준월"] = pd.to_datetime(ts_slice["기준년월"].astype(str), format="%Y%m", errors="coerce")
+                        ts_slice = ts_slice.sort_values("기준월")
+                        chart_cols = [
+                            col
+                            for col in ["KB매매시세(만원)", "KB전세시세(만원)", "실거래매매평균(만원)", "실거래전세평균(만원)"]
+                            if col in ts_slice.columns
+                        ]
+                        if chart_cols:
+                            st.markdown("##### 📈 선택 단지 가격 추이")
+                            st.line_chart(
+                                ts_slice.set_index("기준월")[chart_cols],
+                                height=260,
+                                width="stretch",
+                            )
+                    else:
+                        st.info("선택한 평형의 시계열 데이터는 아직 연결되지 않았습니다.")
+            except Exception as e:
+                st.warning(f"시계열 차트를 불러오지 못했습니다: {e}")
+
         # ── 내 집 + 타겟 체급 비교 대시보드 ─────────────────────────
-        my_price_man = st.session_state.get("my_current_price", 0)
+        my_price_man = st.session_state.get("my_current_price", 0) or st.session_state.get("manual_my_current_price_man", 0)
         if my_price_man and my_price_man > 0 and target_price_man > 0:
             st.markdown("---")
             st.subheader("⚖️ 내 집 vs 타겟 체급 비교")
@@ -462,6 +830,27 @@ with tab1:
                     man_to_eok_str(int(gain)),
                     delta=f"{gain_pct:+.1f}%",
                     delta_color="normal" if gain >= 0 else "inverse",
+                )
+
+            profile = st.session_state.get("user_profile", {})
+            available_cash_man = round(profile.get("available_cash_eok", 0) * 10000) if profile else 0
+            existing_loan_man = int(profile.get("existing_loan_man", 0) or 0) if profile else 0
+            sale_equity_man = max(int(my_price_man) - existing_loan_man, 0)
+            target_loan_man = calc_loan_limit(target_price_man)
+            target_cash_needed_man = max(target_price_man - target_loan_man, 0)
+            net_cash_gap_man = available_cash_man + sale_equity_man - target_cash_needed_man
+
+            cmp4, cmp5, cmp6 = st.columns(3)
+            with cmp4:
+                st.metric("매도 후 예상 자기자본", man_to_eok_str(sale_equity_man))
+            with cmp5:
+                st.metric("타겟 필요 자기자금", man_to_eok_str(target_cash_needed_man))
+            with cmp6:
+                st.metric(
+                    "갈아타기 후 잔여/부족",
+                    man_to_eok_str(abs(int(net_cash_gap_man))),
+                    delta="잔여" if net_cash_gap_man >= 0 else "부족",
+                    delta_color="normal" if net_cash_gap_man >= 0 else "inverse",
                 )
 
 
@@ -544,7 +933,7 @@ with tab2:
     st.markdown("---")
 
     # ── 저장 버튼 ─────────────────────────────────────────────────
-    if st.button("💾 프로파일 저장", type="primary", use_container_width=True):
+    if st.button("💾 프로파일 저장", type="primary", width="stretch"):
         st.session_state["user_profile"] = {
             "household_type":     household_type,
             "purpose":            purpose,
@@ -553,7 +942,6 @@ with tab2:
             "existing_loan_man":  existing_loan_man,
         }
         st.success("✅ 프로파일이 저장되었습니다! Tab 3에서 AI 분석을 확인하세요.")
-        st.balloons()
 
     # ── 저장된 프로파일 요약 표시 ────────────────────────────────────
     if saved_profile:
@@ -579,7 +967,7 @@ with tab3:
         st.info("💡 **Tab 1**에서 타겟 아파트를 먼저 선택해 주세요.")
         prereq_ok = False
     if not api_key:
-        st.warning("⚠️ 사이드바에서 OpenAI API Key를 입력해야 AI 어드바이저를 사용할 수 있습니다.")
+        st.warning("⚠️ `.env`의 OPENAI_API_KEY가 없어 AI 어드바이저만 비활성화됩니다.")
 
     if prereq_ok:
         # ── 타겟 정보 파싱 ────────────────────────────────────────────
@@ -614,8 +1002,8 @@ with tab3:
                 try:
                     pred = predict_price_growth(target_region, target_area_type, period_key)
                     growth_pct   = pred.get("predicted_growth_pct", 0)
-                    confidence   = pred.get("confidence", "-")
-                    model_ver    = pred.get("model_version", "")
+                    confidence   = _confidence_label(pred.get("confidence"))
+                    model_ver    = _display_text(pred.get("model_version"), "모델 확인 필요")
                     est_price    = int(target_price_man * (1 + growth_pct / 100))
 
                     with st.container(border=True):
@@ -640,6 +1028,7 @@ with tab3:
         annual_income_man = user_profile.get("annual_income_man", 0)
         existing_loan_man = user_profile.get("existing_loan_man", 0)
         available_cash_man = round(user_profile.get("available_cash_eok", 0) * 10000)
+        loan_context = {"loan_limit": 0, "ltv": 0.0, "dsr": 0.0}
 
         if target_price_man > 0:
             try:
@@ -654,6 +1043,7 @@ with tab3:
                     household_type=user_profile.get("household_type", ""),
                     purpose=user_profile.get("purpose", ""),
                 )
+                loan_context = {"loan_limit": int(loan_limit), "ltv": float(ltv), "dsr": float(dsr)}
 
                 # 핵심 지표 메트릭
                 dl1, dl2, dl3, dl4 = st.columns(4)
@@ -681,14 +1071,17 @@ with tab3:
                     st.markdown("##### 🏦 추천 대출 상품")
                     for prod in loan_products:
                         with st.container(border=True):
-                            p1, p2, p3 = st.columns([3, 2, 2])
+                            p1, p2, p3, p4 = st.columns([3, 2, 2, 1.4])
                             with p1:
                                 st.markdown(f"**{prod.get('name', '상품명 미상')}**")
                                 st.caption(prod.get("description", ""))
                             with p2:
-                                st.metric("금리", prod.get("rate", "-"))
+                                st.metric("금리", _display_text(prod.get("rate"), "상담 필요"))
                             with p3:
-                                st.metric("한도", man_to_eok_str(int(prod.get("limit", 0))) if prod.get("limit") else "-")
+                                st.metric("한도", man_to_eok_str(int(prod.get("limit", 0))) if prod.get("limit") else "상담 필요")
+                            with p4:
+                                if prod.get("url"):
+                                    st.link_button("상세보기", prod["url"], width="stretch")
 
             except Exception as e:
                 st.error(f"대출 분석 중 오류가 발생했습니다: {e}")
@@ -700,9 +1093,9 @@ with tab3:
         # ── AI 어드바이저 응답 ────────────────────────────────────────
         st.subheader("🤖 AI 어드바이저 분석")
 
-        if st.button("🤖 AI 분석 실행", type="primary", use_container_width=True, key="run_ai_btn"):
+        if st.button("🤖 AI 분석 실행", type="primary", width="stretch", key="run_ai_btn"):
             if not api_key:
-                st.error("OpenAI API Key를 사이드바에 입력해 주세요.")
+                st.error("`.env`에 OPENAI_API_KEY를 설정한 뒤 다시 실행해 주세요.")
             else:
                 with st.spinner("AI가 종합 분석 중입니다... (10~30초 소요)"):
                     try:
@@ -717,15 +1110,11 @@ with tab3:
                             },
                             my_info={
                                 "name":           st.session_state.get("my_name", ""),
-                                "current_price":  st.session_state.get("my_current_price", 0),
+                                "current_price":  st.session_state.get("my_current_price", 0) or st.session_state.get("manual_my_current_price_man", 0),
                                 "purchase_price": my_purchase_price_man,
                                 "purchase_date":  purchase_date_str,
                             },
-                            loan_summary={
-                                "loan_limit": int(loan_limit) if "loan_limit" in dir() else 0,
-                                "ltv":        ltv if "ltv" in dir() else 0,
-                                "dsr":        dsr if "dsr" in dir() else 0,
-                            },
+                            loan_summary=loan_context,
                         )
                         st.session_state["ai_advice"] = advice
                     except Exception as e:
@@ -735,15 +1124,70 @@ with tab3:
             with st.container(border=True):
                 st.markdown(st.session_state["ai_advice"])
 
+        st.markdown("##### 이어서 물어보기")
+        st.caption("궁금한 규제, 대출 상품, 자금 부족 해소 방법을 대화처럼 이어서 확인할 수 있습니다.")
+
+        if "advisor_messages" not in st.session_state:
+            st.session_state["advisor_messages"] = []
+
+        quick_question = st.pills(
+            "빠른 질문",
+            options=[
+                "이 조건에서 가장 먼저 확인할 대출 리스크는?",
+                "자금 부족을 줄이는 방법을 알려줘",
+                "신혼부부가 확인할 만한 상품은?",
+                "DSR 관점에서 조심할 점은?",
+            ],
+            key="advisor_quick_question",
+        )
+        send_quick = st.button("선택한 질문 보내기", width="stretch", key="send_quick_question")
+        typed_question = st.chat_input("대출 규제나 상품에 대해 질문해 보세요")
+        pending_question = typed_question or (quick_question if send_quick and quick_question else "")
+
+        for message in st.session_state["advisor_messages"]:
+            with st.chat_message(message["role"]):
+                st.markdown(message["content"])
+
+        if pending_question:
+            st.session_state["advisor_messages"].append({"role": "user", "content": pending_question})
+            with st.chat_message("user"):
+                st.markdown(pending_question)
+
+            if not api_key:
+                answer = "`.env`에 OPENAI_API_KEY가 없어 AI 상담 답변을 생성할 수 없습니다."
+            else:
+                with st.spinner("문서와 현재 조건을 함께 확인하는 중입니다..."):
+                    answer = get_loan_advice(
+                        api_key=api_key,
+                        user_profile=user_profile,
+                        target_info={
+                            "name":      target_name,
+                            "region":    target_region,
+                            "price_man": target_price_man,
+                            "area_type": target_area_type,
+                        },
+                        my_info={
+                            "name":           st.session_state.get("my_name", ""),
+                            "current_price":  st.session_state.get("my_current_price", 0) or st.session_state.get("manual_my_current_price_man", 0),
+                            "purchase_price": my_purchase_price_man,
+                            "purchase_date":  purchase_date_str,
+                        },
+                        loan_summary=loan_context,
+                        question=pending_question,
+                    )
+            st.session_state["advisor_messages"].append({"role": "assistant", "content": answer})
+            with st.chat_message("assistant"):
+                st.markdown(answer)
+
         st.markdown("---")
 
         # ── 갈아타기 리포트 ───────────────────────────────────────────
         st.subheader("📋 갈아타기 종합 리포트")
 
-        my_name_val    = st.session_state.get("my_name", "")
-        my_price_val   = st.session_state.get("my_current_price", 0)
+        my_name_val    = st.session_state.get("my_name", "") or "직접 입력 보유 주택"
+        my_price_val   = st.session_state.get("my_current_price", 0) or st.session_state.get("manual_my_current_price_man", 0)
 
-        if my_name_val and my_price_val and target_price_man:
+        if my_price_val and target_price_man:
             rc1, rc2 = st.columns(2)
             with rc1:
                 with st.container(border=True):
@@ -766,8 +1210,29 @@ with tab3:
                               delta="상향" if diff > 0 else "하향")
                     feasible = available_cash_man >= (cash_needed if "cash_needed" in dir() else diff)
                     st.metric("갈아타기 가능 여부", "✅ 가능" if feasible else "❌ 자금 부족")
+
+            profile_existing_loan = int(user_profile.get("existing_loan_man", 0) or 0)
+            sale_equity = max(int(my_price_val) - profile_existing_loan, 0)
+            needed_cash = cash_needed if "cash_needed" in dir() else max(target_price_man - calc_loan_limit(target_price_man), 0)
+            total_available = available_cash_man + sale_equity
+            after_move_gap = total_available - needed_cash
+            st.markdown("##### 갈아타기 자금 흐름")
+            flow1, flow2, flow3, flow4 = st.columns(4)
+            with flow1:
+                st.metric("보유주택 매도 후 자기자본", man_to_eok_str(sale_equity))
+            with flow2:
+                st.metric("기존 가용자본", man_to_eok_str(available_cash_man))
+            with flow3:
+                st.metric("타겟 필요 자기자금", man_to_eok_str(int(needed_cash)))
+            with flow4:
+                st.metric(
+                    "최종 잔여/부족",
+                    man_to_eok_str(abs(int(after_move_gap))),
+                    delta="잔여" if after_move_gap >= 0 else "부족",
+                    delta_color="normal" if after_move_gap >= 0 else "inverse",
+                )
         else:
-            st.info("내 아파트 정보를 사이드바에서 확정하면 갈아타기 리포트가 표시됩니다.")
+            st.info("보유 주택 시세를 사이드바에서 검색하거나 직접 입력하면 갈아타기 리포트가 표시됩니다.")
 
 
 # ── 푸터 ─────────────────────────────────────────────────────────────

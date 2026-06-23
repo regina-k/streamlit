@@ -59,8 +59,20 @@ JUSO_API_KEY=...
 streamlit/data/apartment/kb_apt_seoul_full.csv
 streamlit/data/apartment/kb_timeseries_seoul.csv
 streamlit/data/integration/apartment_multihorizon_ver9_latest_features.csv
+streamlit/data/integration/apartment_12m_ver6f_stability_features.csv
 streamlit/ml_model/outputs/models/ver16_service_multihorizon_base_model.pkl
+streamlit/ml_model/outputs/models/apartment_return_lightgbm_ver7d_gu_price_calibrated_target_return_pct_20260622_001315.pkl
+streamlit/ml_model/outputs/calibration/ver16_hierarchical_apt_size_offsets.csv
+streamlit/ml_model/outputs/calibration/ver14_apt_size_residual_adjustments.csv
+streamlit/ml_model/outputs/calibration/ver12c_recent3_horizon_complex_residual_offsets.csv
+streamlit/ml_model/outputs/calibration/ver12d_group_residual_fallback_offsets.csv
+streamlit/ml_model/outputs/calibration/ver11_complex_residual_offsets.csv
+streamlit/ml_model/outputs/performance/ver06220040_ver7d_error_profile.csv
+streamlit/vector_store/shinhan_faiss/index.faiss
+streamlit/vector_store/shinhan_faiss/index.pkl
 ```
+
+공유용 실행 산출물은 `streamlit_runtime_assets_YYYYMMDD.zip` 형식으로 관리한다. 압축을 `streamlit/` 루트에 풀면 `data/`, `ml_model/outputs/`, `vector_store/`가 복원되어야 한다. `data/`만 복원하면 ML 모델 추론과 FAISS 기반 RAG까지 완전히 재현되지 않는다.
 
 `streamlit/data/additional/`은 입지 피처 생성에 필요한 외부 데이터 영역이다. 원천 파일과 전처리 파일은 아래처럼 관리한다.
 

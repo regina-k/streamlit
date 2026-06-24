@@ -10,6 +10,39 @@ import pandas as pd
 from config import KB_DATA_CSV, ML_TIMESERIES_CSV
 
 
+NUMERIC_COLUMNS = [
+    "단지ID",
+    "위도",
+    "경도",
+    "세대수",
+    "공급면적(평)",
+    "전용면적(평)",
+    "계약면적(평)",
+    "공급면적(m2)",
+    "전용면적(m2)",
+    "면적일련번호",
+    "KB매매시세(만원)",
+    "매매상한가(만원)",
+    "매매하한가(만원)",
+    "KB전세시세(만원)",
+    "세대수(평형)",
+    "전세가율",
+    "용적률",
+    "건폐율",
+    "월간매매변동률",
+    "월간전세변동률",
+]
+
+AREA_TYPE_BOUNDS = {
+    "40㎡이하": (0.0, 40.0),
+    "60㎡이하": (40.0, 60.0),
+    "85㎡이하": (60.0, 85.0),
+    "102㎡이하": (85.0, 102.0),
+    "135㎡이하": (102.0, 135.0),
+    "135㎡초과": (135.0, float("inf")),
+}
+
+
 def load_kb_apt_data() -> pd.DataFrame:
     """로컬 KB 단지 CSV를 로드하고 컬럼 타입을 정규화한다.
 
@@ -27,8 +60,22 @@ def load_kb_apt_data() -> pd.DataFrame:
     Raises:
         FileNotFoundError: CSV 파일이 없을 때.
     """
-    # TODO (김혜민): pd.read_csv(KB_DATA_CSV) 후 숫자형 컬럼 변환 및 '지역' 컬럼 생성
-    pass
+    df = pd.read_csv(KB_DATA_CSV)
+
+    for col in NUMERIC_COLUMNS:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+
+    if "시군구" in df.columns and "구" not in df.columns:
+        df["구"] = df["시군구"].astype("string")
+    if "지역" not in df.columns:
+        df["지역"] = "서울 " + df.get("시군구", pd.Series("", index=df.index)).astype("string")
+    if "동" not in df.columns:
+        df["동"] = ""
+    if "아파트명" not in df.columns and "단지명" in df.columns:
+        df["아파트명"] = df["단지명"]
+
+    return df
 
 
 def load_ml_timeseries() -> pd.DataFrame:
@@ -42,8 +89,15 @@ def load_ml_timeseries() -> pd.DataFrame:
     Raises:
         FileNotFoundError: CSV 파일이 없을 때.
     """
-    # TODO (김혜민): pd.read_csv(ML_TIMESERIES_CSV) 후 날짜 파싱 등 필요한 전처리
-    pass
+    df = pd.read_csv(ML_TIMESERIES_CSV)
+    if "기준년월" in df.columns:
+        df["기준년월"] = df["기준년월"].astype(str)
+    for col in df.columns:
+        if col != "기준년월":
+            converted = pd.to_numeric(df[col], errors="coerce")
+            if converted.notna().any():
+                df[col] = converted
+    return df
 
 
 def filter_apartments(
@@ -53,9 +107,12 @@ def filter_apartments(
     keyword: str | None = None,
     price_min: int | None = None,
     price_max: int | None = None,
+    price_range: tuple[int, int] | None = None,
     units_min: int | None = None,
+    units_range: tuple[int, int] | None = None,
     area_min: float | None = None,
     area_max: float | None = None,
+    area_type: str | None = None,
 ) -> pd.DataFrame:
     """조건에 따라 아파트 DataFrame을 필터링한다.
 
@@ -75,5 +132,38 @@ def filter_apartments(
     Returns:
         필터 조건을 모두 만족하는 행의 DataFrame (reset_index 적용).
     """
-    # TODO (김혜민): 조건별 boolean mask 적용 후 reset_index(drop=True) 반환
-    pass
+    if df is None or df.empty:
+        return pd.DataFrame()
+
+    mask = pd.Series(True, index=df.index)
+
+    if region and "지역" in df.columns:
+        mask &= df["지역"].astype(str).str.contains(str(region), na=False)
+    if dong and "동" in df.columns:
+        mask &= df["동"].astype(str).str.contains(str(dong), na=False)
+    if keyword:
+        name_col = "아파트명" if "아파트명" in df.columns else "단지명"
+        if name_col in df.columns:
+            mask &= df[name_col].astype(str).str.contains(
+                str(keyword), case=False, na=False, regex=False
+            )
+    if price_range is not None:
+        price_min, price_max = price_range
+    if price_min is not None and "KB매매시세(만원)" in df.columns:
+        mask &= df["KB매매시세(만원)"] >= price_min
+    if price_max is not None and "KB매매시세(만원)" in df.columns:
+        mask &= df["KB매매시세(만원)"] <= price_max
+    if units_range is not None:
+        units_min, units_max = units_range
+        if "세대수" in df.columns:
+            mask &= df["세대수"] <= units_max
+    if units_min is not None and "세대수" in df.columns:
+        mask &= df["세대수"] >= units_min
+    if area_type in AREA_TYPE_BOUNDS:
+        area_min, area_max = AREA_TYPE_BOUNDS[area_type]
+    if area_min is not None and "공급면적(평)" in df.columns:
+        mask &= df["공급면적(평)"] >= area_min
+    if area_max is not None and "공급면적(평)" in df.columns:
+        mask &= df["공급면적(평)"] <= area_max
+
+    return df.loc[mask].reset_index(drop=True)

@@ -1,109 +1,120 @@
-"""
-대출 한도 계산 및 LTV/DSR 분석 모듈.
+"""Loan-limit, LTV, DSR, and cash-gap helpers for the Streamlit app."""
 
-가계부채 관리방안 규제 기준을 반영한 순수 계산 함수 모음.
-Streamlit 의존성 없음.
-"""
+from __future__ import annotations
 
 from config import LOAN_LIMIT_RULES
 
 
-def calc_loan_limit(price_man: int) -> int:
-    """매매가 기준 주담대 한도를 반환한다.
+def calc_loan_limit(price_man: int | float) -> int:
+    """Return the mortgage cap in manwon based on the configured price bands."""
+    price = max(int(price_man or 0), 0)
+    for upper_price, limit in LOAN_LIMIT_RULES:
+        if price <= upper_price:
+            return min(price, int(limit))
+    return min(price, int(LOAN_LIMIT_RULES[-1][1]))
 
-    가계부채 관리방안 기준:
-    - ≤15억 → 6억 (60,000만원)
-    - 15억 초과~25억 이하 → 4억 (40,000만원)
-    - 25억 초과 → 2억 (20,000만원)
 
-    Args:
-        price_man: 매매가 (만원 단위).
+def calc_ltv(price_man: int | float, loan_man: int | float) -> float:
+    """Calculate LTV percentage from price and loan amount."""
+    price = float(price_man or 0)
+    loan = float(loan_man or 0)
+    if price <= 0:
+        return 0.0
+    return loan / price * 100.0
 
-    Returns:
-        주담대 한도 (만원 단위).
+
+def calc_dsr(
+    loan_man: int | float,
+    annual_income_man: int | float,
+    existing_loan_man: int | float = 0,
+    annual_rate: float = 0.045,
+    years: int = 30,
+) -> float:
+    """Estimate DSR using an amortized mortgage payment plus existing-loan burden.
+
+    Values are in manwon. Existing loans are approximated as 10% annual repayment
+    burden because detailed amortization terms are not collected in the UI.
     """
-    # TODO: LOAN_LIMIT_RULES를 순회하며 price_man과 비교 후 해당 한도 반환
-    pass
+    income = float(annual_income_man or 0)
+    if income <= 0:
+        return 0.0
 
+    principal = max(float(loan_man or 0), 0.0)
+    months = max(int(years) * 12, 1)
+    monthly_rate = max(float(annual_rate), 0.0) / 12
+    if monthly_rate == 0:
+        annual_mortgage_payment = principal / max(years, 1)
+    else:
+        monthly_payment = principal * monthly_rate / (1 - (1 + monthly_rate) ** -months)
+        annual_mortgage_payment = monthly_payment * 12
 
-def calc_ltv(price_man: int, loan_man: int) -> float:
-    """LTV(주택담보대출비율)를 계산한다.
-
-    Args:
-        price_man: 매매가 (만원 단위).
-        loan_man: 대출금 (만원 단위).
-
-    Returns:
-        LTV (%). 예) 40.0
-    """
-    # TODO: loan_man / price_man * 100
-    pass
-
-
-def calc_dsr(annual_income_man: int, annual_loan_payment_man: int) -> float:
-    """DSR(총부채원리금상환비율)을 계산한다.
-
-    Args:
-        annual_income_man: 연간 소득 (만원 단위).
-        annual_loan_payment_man: 연간 원리금 상환액 (만원 단위).
-
-    Returns:
-        DSR (%). 예) 35.0
-    """
-    # TODO: annual_loan_payment_man / annual_income_man * 100
-    pass
+    existing_annual_payment = max(float(existing_loan_man or 0), 0.0) * 0.10
+    return (annual_mortgage_payment + existing_annual_payment) / income * 100.0
 
 
 def calc_cash_needed(
-    price_man: int,
-    loan_man: int,
-    current_asset_man: int,
+    price_man: int | float,
+    loan_man: int | float,
+    current_asset_man: int | float,
 ) -> dict:
-    """매수에 필요한 현금 및 부족분을 계산한다.
-
-    Args:
-        price_man: 매매가 (만원 단위).
-        loan_man: 조달 가능 대출금 (만원 단위).
-        current_asset_man: 현재 보유 현금성 자산 (만원 단위).
-
-    Returns:
-        {
-            '필요현금': int,   # 매매가 - 대출금
-            '부족Gap': int,    # 필요현금 - 현재자산 (음수면 여유)
-            '여유여부': bool,  # 부족Gap <= 0
-        }
-    """
-    # TODO: 각 값 계산 후 dict 반환
-    pass
+    """Calculate required equity and the user's remaining surplus or shortage."""
+    price = max(int(price_man or 0), 0)
+    loan = max(int(loan_man or 0), 0)
+    asset = max(int(current_asset_man or 0), 0)
+    cash_needed = max(price - loan, 0)
+    asset_gap = asset - cash_needed
+    return {
+        "cash_needed": cash_needed,
+        "asset_gap": asset_gap,
+        "is_affordable": asset_gap >= 0,
+    }
 
 
 def recommend_loan_products(
-    price_man: int,
-    household_type: str,
-    purpose: str,
-    annual_income_man: int,
+    price: int | float | None = None,
+    loan_limit: int | float | None = None,
+    annual_income: int | float | None = None,
+    household_type: str = "",
+    purpose: str = "",
+    price_man: int | float | None = None,
+    annual_income_man: int | float | None = None,
 ) -> list[dict]:
-    """가구 유형·목적·소득 기반 신한은행 주담대 상품 목록을 반환한다.
+    """Return simple rule-based Shinhan-style mortgage product candidates."""
+    target_price = int(price if price is not None else price_man or 0)
+    limit = int(loan_limit if loan_limit is not None else calc_loan_limit(target_price))
+    income = int(annual_income if annual_income is not None else annual_income_man or 0)
 
-    Args:
-        price_man: 매매가 (만원 단위).
-        household_type: 가구 유형. config.HOUSEHOLD_TYPES 참고.
-        purpose: 매매 목적. '실거주' 또는 '투자'.
-        annual_income_man: 연간 소득 (만원 단위).
-
-    Returns:
-        추천 상품 리스트. 각 항목 예시:
+    products = [
         {
-            '상품명': str,
-            '금리': str,     # 예) '연 3.5%~4.2%'
-            '한도_만원': int,
-            '특이사항': str,
+            "name": "신한 주택담보대출",
+            "description": "일반 아파트 매수 목적의 기본 주택담보대출 후보입니다.",
+            "rate": "영업점 확인",
+            "limit": limit,
+            "url": "https://m.shinhan.com/mw/fin/pg/PR0502S0100F01?hwno=&mid=220011114004&pid=S614221100&type=app",
         }
+    ]
 
-    Note:
-        현재는 하드코딩 더미 데이터 반환.
-        김동하가 RAG 파이프라인 완성 후 실제 상품 데이터로 교체 예정.
-    """
-    # TODO: household_type / purpose 조합별 더미 상품 데이터 dict 리스트 반환
-    # TODO (김동하 인수인계): rag_advisor.py RAG 완성 후 실제 API 연동으로 교체
-    pass
+    if household_type in {"신혼부부", "신생아출산"} and purpose == "실거주":
+        products.insert(
+            0,
+            {
+                "name": "신한 신혼부부/생애주기 우대 주담대",
+                "description": "가구 유형 우대 가능성을 우선 확인할 만한 후보입니다.",
+                "rate": "우대금리 가능",
+                "limit": limit,
+                "url": "https://bank.shinhan.com/index.jsp?cr=020305010000",
+            },
+        )
+
+    if income > 0 and target_price <= 150_000 and purpose == "실거주":
+        products.append(
+            {
+                "name": "정책모기지 검토",
+                "description": "가격과 소득 조건 충족 여부를 별도 확인할 가치가 있습니다.",
+                "rate": "상품별 상이",
+                "limit": min(limit, 50_000),
+                "url": "https://bank.shinhan.com/index.jsp?cr=020305010000&pcd=S632121500",
+            }
+        )
+
+    return products

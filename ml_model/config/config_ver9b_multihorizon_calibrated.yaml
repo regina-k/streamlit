@@ -1,0 +1,133 @@
+﻿project:
+  name: apartment_return_lightgbm_ver9b_multihorizon_calibrated
+  random_state: 42
+
+paths:
+  data_path: "C:/Users/User/Desktop/final/streamlit/data/integration/apartment_multihorizon_ver9_stability_features.csv"
+  output_dir: "C:/Users/User/Desktop/final/streamlit/ml_model/outputs"
+  model_dir: "C:/Users/User/Desktop/final/streamlit/ml_model/outputs/models"
+  prediction_dir: "C:/Users/User/Desktop/final/streamlit/ml_model/outputs/predictions"
+
+data:
+  date_column: date
+  target_column: target_return_pct
+  id_columns: [apt_size_id, complex_id, area_serial_no, date, yyyymm, horizon_months, future_date]
+  active_feature_sets: [horizon, kb_market, apartment_meta, poi_accessibility, individual_stability_without_actual_tx]
+  feature_sets:
+    horizon:
+      - horizon_months
+    kb_market:
+      - kb_sale_price_manwon
+      - kb_jeonse_price_manwon
+      - kb_jeonse_ratio_pct
+      - kb_price_gap_manwon
+    apartment_meta:
+      - gu
+      - lat
+      - lon
+      - households_total
+      - built_yyyymm
+      - property_type
+      - supply_area_pyeong
+      - exclusive_area_pyeong
+      - contract_area_pyeong
+      - supply_area_m2
+      - exclusive_area_m2
+      - housing_type
+      - households_by_size
+      - floor_area_ratio
+      - building_coverage_ratio
+    poi_accessibility:
+      - nearest_station_m
+      - station_count_500m
+      - station_count_1000m
+      - nearest_school_m
+      - school_count_1000m
+      - nearest_elementary_school_m
+      - elementary_school_count_1000m
+      - nearest_middle_school_m
+      - middle_school_count_1000m
+      - nearest_high_school_m
+      - high_school_count_1000m
+      - nearest_hospital_m
+      - hospital_count_3000m
+      - hospital_count_5000m
+      - hospital_doctor_sum_3000m
+      - hospital_doctor_sum_5000m
+      - nearest_tertiary_hospital_m
+      - tertiary_hospital_count_5000m
+    individual_stability_without_actual_tx:
+      - built_year
+      - built_month
+      - building_age_years
+      - size_household_share
+      - log_households_total
+      - log_households_by_size
+      - log_kb_sale_price
+      - sale_price_per_exclusive_pyeong
+      - jeonse_price_per_exclusive_pyeong
+      - sale_price_per_supply_pyeong
+      - complex_size_count
+      - complex_sale_price_premium_pct
+      - complex_pp_premium_pct
+      - complex_area_rank_pct
+      - complex_price_rank_pct
+      - gu_pp_premium_pct
+      - gu_price_rank_pct
+  categorical_columns: [gu, property_type, housing_type]
+  drop_missing_target: true
+
+split:
+  strategy: time_by_horizon_tail
+  horizon_column: horizon_months
+  valid_tail_months: 5
+  test_tail_months: 5
+  short_horizon_train_only: true
+
+model:
+  type: lightgbm
+  params:
+    objective: regression
+    n_estimators: 1200
+    learning_rate: 0.03
+    num_leaves: 63
+    subsample: 0.9
+    colsample_bytree: 0.9
+    min_child_samples: 80
+    reg_alpha: 0.0
+    reg_lambda: 1.0
+    n_jobs: -1
+  fit:
+    early_stopping_rounds: 80
+    eval_metric: l1
+    log_evaluation_period: 100
+
+calibration:
+  method: grouped_mean_residual
+  groups:
+    - column: horizon_months
+    - column: gu
+    - column: kb_sale_price_manwon
+      type: quantile
+      bins: 4
+      name: sale_price_quartile
+  shrinkage: 500
+  min_rows: 100
+
+metrics:
+  primary: mae
+  enabled: [mae, rmse, r2, mape, spearman, bias]
+
+group_evaluation:
+  quantile_bins: 4
+  min_rows: 100
+  groups:
+    horizon: horizon_months
+    gu: gu
+    sale_price_quartile:
+      column: kb_sale_price_manwon
+      type: quantile
+    building_age_quartile:
+      column: building_age_years
+      type: quantile
+

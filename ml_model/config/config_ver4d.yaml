@@ -1,0 +1,117 @@
+﻿project:
+  name: apartment_return_lightgbm_ver4d_winsor_log_time_relative
+  random_state: 42
+
+paths:
+  data_path: "C:/Users/User/Desktop/final/streamlit/data/integration/apartment_multihorizon_ver4_features.csv"
+  output_dir: "C:/Users/User/Desktop/final/streamlit/ml_model/outputs"
+  model_dir: "C:/Users/User/Desktop/final/streamlit/ml_model/outputs/models"
+  prediction_dir: "C:/Users/User/Desktop/final/streamlit/ml_model/outputs/predictions"
+
+data:
+  date_column: date
+  target_column: target_log_return_pct_winsor
+  evaluation_target_column: target_return_pct
+  prediction_transform: log_return_pct_to_return_pct
+  id_columns: [apt_size_id, complex_id, area_serial_no, date, yyyymm, horizon_months, future_date]
+  active_feature_sets: [horizon, price_market, apartment_meta, poi_accessibility, time_momentum, relative_market]
+  feature_sets:
+    horizon: [horizon_months]
+    price_market:
+      - kb_sale_price_manwon
+      - kb_jeonse_price_manwon
+      - kb_jeonse_ratio_pct
+      - kb_price_gap_manwon
+      - actual_sale_avg_manwon
+      - actual_jeonse_avg_manwon
+      - actual_jeonse_ratio_pct
+      - actual_sale_count
+      - actual_jeonse_count
+      - actual_monthly_rent_count
+    apartment_meta:
+      - gu
+      - lat
+      - lon
+      - households_total
+      - built_yyyymm
+      - property_type
+      - supply_area_pyeong
+      - exclusive_area_pyeong
+      - contract_area_pyeong
+      - supply_area_m2
+      - exclusive_area_m2
+      - housing_type
+      - households_by_size
+      - floor_area_ratio
+      - building_coverage_ratio
+    poi_accessibility:
+      - nearest_station_m
+      - station_count_500m
+      - station_count_1000m
+      - nearest_school_m
+      - school_count_1000m
+      - nearest_elementary_school_m
+      - elementary_school_count_1000m
+      - nearest_middle_school_m
+      - middle_school_count_1000m
+      - nearest_high_school_m
+      - high_school_count_1000m
+      - nearest_hospital_m
+      - hospital_count_3000m
+      - hospital_count_5000m
+      - hospital_doctor_sum_3000m
+      - hospital_doctor_sum_5000m
+      - nearest_tertiary_hospital_m
+      - tertiary_hospital_count_5000m
+    time_momentum:
+      - sale_return_1m_pct
+      - jeonse_return_1m_pct
+      - sale_return_3m_pct
+      - jeonse_return_3m_pct
+      - sale_return_6m_pct
+      - jeonse_return_6m_pct
+      - sale_return_12m_pct
+      - jeonse_return_12m_pct
+      - gap_change_1m_pct
+      - jeonse_ratio_change_1m
+      - sale_ma_3m
+      - actual_sale_count_sum_3m
+      - sale_ma_6m
+      - actual_sale_count_sum_6m
+      - sale_ma_12m
+      - actual_sale_count_sum_12m
+      - sale_vs_ma_12m_pct
+    relative_market:
+      - gu_sale_price_premium_pct
+      - gu_jeonse_ratio_premium
+      - gu_sale_price_rank_pct
+      - gu_actual_sale_count_share
+  categorical_columns: [gu, property_type, housing_type]
+  drop_missing_target: true
+  sample_frac:
+  max_rows:
+
+split:
+  strategy: time_ratio
+  train_ratio: 0.7
+  valid_ratio: 0.2
+  test_ratio: 0.1
+
+model:
+  type: lightgbm
+  params:
+    objective: regression
+    n_estimators: 300
+    learning_rate: 0.05
+    num_leaves: 63
+    subsample: 0.9
+    colsample_bytree: 0.9
+    min_child_samples: 50
+    reg_alpha: 0.0
+    reg_lambda: 1.0
+    n_jobs: -1
+
+metrics:
+  primary: mae
+  enabled: [mae, rmse, r2, mape, spearman]
+

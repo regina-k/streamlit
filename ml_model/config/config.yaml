@@ -1,0 +1,51 @@
+﻿project:
+  name: ver16_hierarchical_apt_size_residual
+  purpose: "One-command reproduction for the current service candidate"
+
+pipeline:
+  type: train_then_ver16_post_calibration
+  base_training_config: config_ver9b_multihorizon_calibrated.yaml
+
+data:
+  training_feature_store: "streamlit/data/integration/apartment_multihorizon_ver9_stability_features.csv"
+  service_feature_store: "streamlit/data/integration/apartment_multihorizon_ver9_latest_features.csv"
+  target_column: target_return_pct
+  horizon_column: horizon_months
+  supported_horizons: [12, 24, 36, 60]
+  evaluated_horizons: [12, 24, 36, 48]
+  note: "60m can be inferred by the single multi-horizon model, but has no mature test window yet."
+
+post_calibration:
+  version: ver16
+  script: "scripts/compare_hierarchical_apt_size_shrinkage.py"
+  complex_offsets: "streamlit/ml_model/outputs/calibration/ver12c_recent3_horizon_complex_residual_offsets.csv"
+  group_offsets: "streamlit/ml_model/outputs/calibration/ver12d_group_residual_fallback_offsets.csv"
+  service_model_output: "streamlit/ml_model/outputs/models/ver16_service_multihorizon_base_model.pkl"
+  output_offsets: "streamlit/ml_model/outputs/calibration/ver16_hierarchical_apt_size_offsets.csv"
+  output_grid: "streamlit/ml_model/outputs/calibration/ver16_hierarchical_apt_size_shrinkage_grid.json"
+  prediction_column: prediction_calibrated
+  source_months: 3
+  shrinkage: 0.5
+  min_rows: 1
+  fallback_order:
+    - hier_apt_size_id+horizon
+    - complex_id+horizon
+    - group_gu_area
+    - horizon_global
+    - global
+
+service:
+  module: "streamlit/modules/ml_predictor.py"
+  function: predict_apartment_growth_horizons
+  model_version: ver16_hierarchical_apt_size_residual
+  note: "app.py is UI-only for this experiment. Reverting app.py does not remove model artifacts or predictor code."
+
+performance:
+  report: "streamlit/ml_model/outputs/performance/ver06222256_ver16_hierarchical_apt_size_shrinkage.md"
+  test_mae: 5.0376
+  test_rmse: 8.1711
+  test_r2: 0.7150
+  test_spearman: 0.8715
+  test_p80: 8.6336
+  test_p90: 13.6911
+

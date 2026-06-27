@@ -4,11 +4,20 @@
     python src/rag/chain.py
 """
 
-import os
 from pathlib import Path
 from dotenv import load_dotenv
 
 load_dotenv()
+
+from config import (  # noqa: E402
+    OPENAI_CHAT_MODEL,
+    OPENAI_MAX_OUTPUT_TOKENS,
+    OPENAI_RAG_RETRIEVER_K,
+    OPENAI_REASONING_EFFORT,
+    OPENAI_REQUEST_TIMEOUT,
+    OPENAI_TEXT_VERBOSITY,
+    OPENAI_USE_RESPONSES_API,
+)
 
 VECTORSTORE_PATH = str(Path("vector_store/shinhan_faiss"))
 
@@ -23,7 +32,7 @@ def load_retriever():
         embeddings,
         allow_dangerous_deserialization=True,
     )
-    return vectorstore.as_retriever(search_kwargs={"k": 4})
+    return vectorstore.as_retriever(search_kwargs={"k": OPENAI_RAG_RETRIEVER_K})
 
 
 def build_chain(retriever):
@@ -32,7 +41,14 @@ def build_chain(retriever):
     from langchain_core.output_parsers import StrOutputParser
     from langchain_core.runnables import RunnablePassthrough
 
-    llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
+    llm = ChatOpenAI(
+        model=OPENAI_CHAT_MODEL,
+        use_responses_api=OPENAI_USE_RESPONSES_API,
+        reasoning_effort=OPENAI_REASONING_EFFORT,
+        verbosity=OPENAI_TEXT_VERBOSITY,
+        max_tokens=OPENAI_MAX_OUTPUT_TOKENS,
+        request_timeout=OPENAI_REQUEST_TIMEOUT,
+    )
 
     prompt = ChatPromptTemplate.from_template("""
 당신은 신한은행 주택담보대출 전문 상담사입니다.

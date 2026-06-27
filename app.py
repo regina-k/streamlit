@@ -8,6 +8,8 @@ UI 오케스트레이터 — 비즈니스 로직은 modules/ 에 위임한다.
 
 import os
 import re
+import hashlib
+import json
 from difflib import SequenceMatcher
 
 import pandas as pd
@@ -19,7 +21,12 @@ try:
 except ImportError:
     pass
 
-from config import HOUSEHOLD_TYPES, PURPOSE_OPTIONS, AREA_TYPES
+from config import (
+    AREA_TYPES,
+    HOUSEHOLD_TYPES,
+    OPENAI_CHAT_MODEL_LABEL,
+    PURPOSE_OPTIONS,
+)
 from modules.kb_api import fetch_search_suggestions, fetch_complex_id, fetch_complex_price
 from modules.data_loader import load_kb_apt_data, load_ml_timeseries, filter_apartments
 from modules.utils import format_price_kor, man_to_eok_str
@@ -30,7 +37,7 @@ from modules.loan_calculator import (
     calc_cash_needed,
     recommend_loan_products,
 )
-from modules.ml_predictor import predict_apartment_growth_horizons, predict_price_growth
+from modules.ml_predictor import predict_apartment_growth_horizons
 from modules.rag_advisor import get_loan_advice
 
 # ── 페이지 설정 ──────────────────────────────────────────────────────────
@@ -216,6 +223,91 @@ def _target_prediction_key(row: pd.Series | dict, price_column: str | None) -> s
     return _candidate_key(row, price_column)
 
 
+def _clean_context_value(value):
+    if value is None:
+        return None
+    try:
+        if pd.isna(value):
+            return None
+    except (TypeError, ValueError):
+        pass
+    return value.item() if hasattr(value, "item") else value
+
+
+def _area_type_label(row: pd.Series | dict, selected_area_type: str | None = None) -> str | None:
+    for column in ["평형유형", "면적유형", "주택형"]:
+        value = _clean_context_value(row.get(column))
+        if value not in (None, ""):
+            return str(value)
+    if selected_area_type and selected_area_type != "전체":
+        return selected_area_type
+    exclusive_m2 = _clean_context_value(row.get("전용면적(m2)"))
+    if exclusive_m2 is None:
+        return None
+    area = float(exclusive_m2)
+    for label, upper in [("40㎡이하", 40), ("60㎡이하", 60), ("85㎡이하", 85), ("102㎡이하", 102), ("135㎡이하", 135)]:
+        if area <= upper:
+            return label
+    return "135㎡초과"
+
+
+def _build_target_advisor_context(
+    row: pd.Series | dict,
+    price_column: str | None,
+    region_column: str | None,
+    selected_area_type: str | None,
+) -> dict:
+    address_value = _clean_context_value(row.get("지역"))
+    if address_value in (None, "") and region_column:
+        address_value = _clean_context_value(row.get(region_column))
+    return {
+        "name": _clean_context_value(row.get("단지명") or row.get("name")),
+        "address": address_value,
+        "region": _clean_context_value(row.get(region_column)) if region_column else None,
+        "complex_id": _clean_context_value(row.get("단지ID")),
+        "area_serial_no": _clean_context_value(row.get("면적일련번호")),
+        "price_man": _clean_context_value(row.get(price_column)) if price_column else None,
+        "jeonse_price_man": _clean_context_value(row.get("KB전세시세(만원)")),
+        "jeonse_ratio_pct": _clean_context_value(row.get("전세가율")),
+        "area_type": _area_type_label(row, selected_area_type),
+        "supply_area_pyeong": _clean_context_value(row.get("공급면적(평)")),
+        "exclusive_area_pyeong": _clean_context_value(row.get("전용면적(평)")),
+        "units": _clean_context_value(row.get("세대수")),
+        "households_by_size": _clean_context_value(row.get("세대수(평형)")),
+        "completion": _clean_context_value(row.get("준공년월")),
+        "property_type": _clean_context_value(row.get("물건종류")),
+        "floor_area_ratio": _clean_context_value(row.get("용적률")),
+        "building_coverage_ratio": _clean_context_value(row.get("건폐율")),
+        "monthly_sale_change_pct": _clean_context_value(row.get("월간매매변동률")),
+        "monthly_jeonse_change_pct": _clean_context_value(row.get("월간전세변동률")),
+    }
+
+
+def _build_home_advisor_context() -> dict:
+    current_price = int(
+        st.session_state.get("my_current_price", 0)
+        or st.session_state.get("manual_my_current_price_man", 0)
+        or 0
+    )
+    name = str(st.session_state.get("my_name", "") or "").strip()
+    if not name and current_price <= 0:
+        return {}
+    return {
+        "name": name or "직접 입력 보유 주택",
+        "address": st.session_state.get("my_addr"),
+        "current_price": current_price,
+        "purchase_price": my_purchase_price_man,
+        "purchase_date": purchase_date_str,
+        "units": st.session_state.get("my_units"),
+        "completion": st.session_state.get("my_completion"),
+    }
+
+
+def _advisor_context_key(*contexts: dict) -> str:
+    serialized = json.dumps(contexts, ensure_ascii=False, sort_keys=True, default=str)
+    return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
+
+
 def _get_target_horizon_predictions(row: pd.Series | dict, price_column: str | None) -> dict | None:
     key = _target_prediction_key(row, price_column)
     cache = st.session_state.setdefault("target_horizon_predictions", {})
@@ -372,7 +464,7 @@ with tab1:
     # ── 서비스 이용 가이드 ───────────────────────────────────────────
     with st.expander("📖 서비스 이용 가이드", expanded=False):
         st.markdown(
-            """
+            f"""
             **이 서비스를 사용하는 방법**
 
             1. **Tab 1 (투자 프로파일)**에서 가구 형태, 소득, 자본금 등을 입력하고 저장하세요.
@@ -381,7 +473,7 @@ with tab1:
             4. 원하는 단지를 클릭하면 자동으로 **대출 규제·자금 분석**이 수행됩니다.
             5. **Tab 3 (AI 종합 분석)**에서 ML 가격 예측과 AI 어드바이저 분석을 확인하세요.
 
-            > 💡 **데이터 출처:** KB부동산 시세 / **AI 엔진:** OpenAI GPT-4o
+            > 💡 **데이터 출처:** KB부동산 시세 / **AI 엔진:** {OPENAI_CHAT_MODEL_LABEL}
             """
         )
 
@@ -611,6 +703,17 @@ with tab1:
             ["_affordable", "자금여유(만원)", price_col],
             ascending=[False, False, True],
         ).drop(columns=["_affordable"])
+
+    st.session_state["apartment_search_context"] = {
+        "region": sel_region if sel_region != "전체" else "전체",
+        "keyword": keyword_filter.strip() or None,
+        "price_min_man": int(price_range[0]),
+        "price_max_man": int(price_range[1]),
+        "units_min": int(units_range[0]),
+        "units_max": int(units_range[1]),
+        "area_type": sel_area_type if sel_area_type != "전체" else "전체",
+        "sort_choice": sort_choice,
+    }
 
     df_filt = df_filt.reset_index(drop=True)
     st.caption(f"🏘️ 검색 결과: **{len(df_filt):,}개** 단지")
@@ -1058,15 +1161,35 @@ with tab3:
             or "선택된 단지"
         )
         target_region    = target_row.get(region_col, "") if region_col else ""
-        target_area_type = target_row.get("평형유형", target_row.get("면적유형", "중형"))
+        search_context = st.session_state.get("apartment_search_context", {})
+        target_area_type = _area_type_label(target_row, search_context.get("area_type")) or "정보 없음"
+        target_advisor_context = _build_target_advisor_context(
+            target_row,
+            price_col,
+            region_col,
+            search_context.get("area_type"),
+        )
+        home_advisor_context = _build_home_advisor_context()
 
-        # ── STUB 상태 배너 ───────────────────────────────────────────
+        # 탭 2와 동일한 선택 단지·평형 예측 결과를 재사용한다.
+        target_horizon_result = None
+        target_prediction_error = None
         try:
-            stub_check = predict_price_growth(target_region, target_area_type, "1yr")
-            if str(stub_check.get("model_version", "")).upper().startswith("STUB"):
+            target_horizon_result = _get_target_horizon_predictions(target_row, price_col)
+            if str((target_horizon_result or {}).get("model_version", "")).upper().startswith("STUB"):
                 st.warning("⚠️ ML 모델 분석 준비 중 — 더미 데이터가 표시됩니다.")
-        except Exception:
-            st.warning("⚠️ ML 예측 모듈을 초기화할 수 없습니다. 더미 데이터가 표시될 수 있습니다.")
+        except Exception as exc:
+            target_prediction_error = str(exc)
+            st.warning("⚠️ 선택 단지의 ML 예측을 불러오지 못했습니다.")
+
+        predictions_by_month = {
+            int(pred.get("horizon_months", 0)): pred
+            for pred in (target_horizon_result or {}).get("predictions", [])
+        }
+        target_model_ver = _display_text(
+            (target_horizon_result or {}).get("model_version"),
+            "모델 확인 필요",
+        )
 
         st.markdown("---")
 
@@ -1075,15 +1198,18 @@ with tab3:
         st.caption(f"대상 지역: **{target_region}** / 평형 유형: **{target_area_type}**")
 
         ml_col1, ml_col2, ml_col3 = st.columns(3)
-        ml_periods = [("1yr", "1년 후", ml_col1), ("3yr", "3년 후", ml_col2), ("5yr", "5년 후", ml_col3)]
+        ml_periods = [(12, "1년 후", ml_col1), (36, "3년 후", ml_col2), (60, "5년 후", ml_col3)]
 
-        for period_key, period_label, col in ml_periods:
+        for horizon_months, period_label, col in ml_periods:
             with col:
                 try:
-                    pred = predict_price_growth(target_region, target_area_type, period_key)
+                    if target_prediction_error:
+                        raise RuntimeError(target_prediction_error)
+                    pred = predictions_by_month.get(horizon_months)
+                    if pred is None:
+                        raise ValueError(f"{horizon_months}개월 예측 결과가 없습니다.")
                     growth_pct   = pred.get("predicted_growth_pct", 0)
                     confidence   = _confidence_label(pred.get("confidence"))
-                    model_ver    = _display_text(pred.get("model_version"), "모델 확인 필요")
                     est_price    = int(target_price_man * (1 + growth_pct / 100))
 
                     with st.container(border=True):
@@ -1094,7 +1220,7 @@ with tab3:
                             delta_color="normal" if growth_pct >= 0 else "inverse",
                         )
                         st.metric("추정 시세", man_to_eok_str(est_price))
-                        st.caption(f"신뢰도: {confidence}  |  모델: {model_ver}")
+                        st.caption(f"신뢰도: {confidence}  |  모델: {target_model_ver}")
                 except Exception as e:
                     with st.container(border=True):
                         st.markdown(f"**{period_label} 예측**")
@@ -1108,14 +1234,28 @@ with tab3:
         annual_income_man = user_profile.get("annual_income_man", 0)
         existing_loan_man = user_profile.get("existing_loan_man", 0)
         available_cash_man = round(user_profile.get("available_cash_eok", 0) * 10000)
-        loan_context = {"loan_limit": 0, "ltv": 0.0, "dsr": 0.0}
+        home_price_man = int(home_advisor_context.get("current_price", 0) or 0)
+        home_sale_equity_man = max(home_price_man - int(existing_loan_man or 0), 0) if home_price_man > 0 else 0
+        total_purchase_funds_man = available_cash_man + home_sale_equity_man
+        loan_context = {
+            "loan_limit": 0,
+            "ltv": 0.0,
+            "dsr": 0.0,
+            "cash_needed": 0,
+            "asset_gap": 0,
+            "is_affordable": None,
+            "available_cash": int(available_cash_man),
+            "home_sale_equity": int(home_sale_equity_man),
+            "total_available": int(total_purchase_funds_man),
+            "recommended_products": [],
+        }
 
         if target_price_man > 0:
             try:
                 loan_limit    = calc_loan_limit(target_price_man)
                 ltv           = calc_ltv(target_price_man, loan_limit)
                 dsr           = calc_dsr(loan_limit, annual_income_man, existing_loan_man)
-                cash_info     = calc_cash_needed(target_price_man, loan_limit, available_cash_man)
+                cash_info     = calc_cash_needed(target_price_man, loan_limit, total_purchase_funds_man)
                 loan_products = recommend_loan_products(
                     price=target_price_man,
                     loan_limit=loan_limit,
@@ -1123,7 +1263,20 @@ with tab3:
                     household_type=user_profile.get("household_type", ""),
                     purpose=user_profile.get("purpose", ""),
                 )
-                loan_context = {"loan_limit": int(loan_limit), "ltv": float(ltv), "dsr": float(dsr)}
+                cash_needed = int(cash_info.get("cash_needed", target_price_man - loan_limit))
+                asset_gap = int(cash_info.get("asset_gap", available_cash_man - cash_needed))
+                loan_context = {
+                    "loan_limit": int(loan_limit),
+                    "ltv": float(ltv),
+                    "dsr": float(dsr),
+                    "cash_needed": cash_needed,
+                    "asset_gap": asset_gap,
+                    "is_affordable": bool(cash_info.get("is_affordable", asset_gap >= 0)),
+                    "available_cash": int(available_cash_man),
+                    "home_sale_equity": int(home_sale_equity_man),
+                    "total_available": int(total_purchase_funds_man),
+                    "recommended_products": loan_products,
+                }
 
                 # 핵심 지표 메트릭
                 dl1, dl2, dl3, dl4 = st.columns(4)
@@ -1136,11 +1289,9 @@ with tab3:
                     dsr_color = "🟢" if dsr <= 40 else ("🟡" if dsr <= 60 else "🔴")
                     st.metric("DSR", f"{dsr_color} {dsr:.1f}%")
                 with dl4:
-                    cash_needed = int(cash_info.get("cash_needed", target_price_man - loan_limit))
                     st.metric("필요 자기자금", man_to_eok_str(cash_needed))
 
                 # 자금 여유/부족 배너
-                asset_gap = available_cash_man - cash_needed
                 if asset_gap >= 0:
                     st.success(f"✅ 현재 자본금으로 매수 가능합니다. 여유 자금: **{man_to_eok_str(int(asset_gap))}**")
                 else:
@@ -1173,6 +1324,20 @@ with tab3:
         # ── AI 어드바이저 응답 ────────────────────────────────────────
         st.subheader("🤖 AI 어드바이저 분석")
 
+        advisor_payload = {
+            "user_profile": user_profile,
+            "target_info": target_advisor_context,
+            "my_info": home_advisor_context,
+            "ml_prediction": target_horizon_result or {},
+            "loan_summary": loan_context,
+            "search_context": search_context,
+        }
+        current_advisor_context_key = _advisor_context_key(advisor_payload)
+        if st.session_state.get("advisor_context_key") != current_advisor_context_key:
+            st.session_state["advisor_context_key"] = current_advisor_context_key
+            st.session_state.pop("ai_advice", None)
+            st.session_state["advisor_messages"] = []
+
         if st.button("🤖 AI 분석 실행", type="primary", use_container_width=True, key="run_ai_btn"):
             if not api_key:
                 st.error("`.env`에 OPENAI_API_KEY를 설정한 뒤 다시 실행해 주세요.")
@@ -1181,20 +1346,7 @@ with tab3:
                     try:
                         advice = get_loan_advice(
                             api_key=api_key,
-                            user_profile=user_profile,
-                            target_info={
-                                "name":         target_name,
-                                "region":       target_region,
-                                "price_man":    target_price_man,
-                                "area_type":    target_area_type,
-                            },
-                            my_info={
-                                "name":           st.session_state.get("my_name", ""),
-                                "current_price":  st.session_state.get("my_current_price", 0) or st.session_state.get("manual_my_current_price_man", 0),
-                                "purchase_price": my_purchase_price_man,
-                                "purchase_date":  purchase_date_str,
-                            },
-                            loan_summary=loan_context,
+                            **advisor_payload,
                         )
                         st.session_state["ai_advice"] = advice
                     except Exception as e:
@@ -1241,20 +1393,7 @@ with tab3:
                 with st.spinner("문서와 현재 조건을 함께 확인하는 중입니다..."):
                     answer = get_loan_advice(
                         api_key=api_key,
-                        user_profile=user_profile,
-                        target_info={
-                            "name":      target_name,
-                            "region":    target_region,
-                            "price_man": target_price_man,
-                            "area_type": target_area_type,
-                        },
-                        my_info={
-                            "name":           st.session_state.get("my_name", ""),
-                            "current_price":  st.session_state.get("my_current_price", 0) or st.session_state.get("manual_my_current_price_man", 0),
-                            "purchase_price": my_purchase_price_man,
-                            "purchase_date":  purchase_date_str,
-                        },
-                        loan_summary=loan_context,
+                        **advisor_payload,
                         question=pending_question,
                     )
             st.session_state["advisor_messages"].append({"role": "assistant", "content": answer})
@@ -1270,6 +1409,11 @@ with tab3:
         my_price_val   = st.session_state.get("my_current_price", 0) or st.session_state.get("manual_my_current_price_man", 0)
 
         if my_price_val and target_price_man:
+            profile_existing_loan = int(user_profile.get("existing_loan_man", 0) or 0)
+            sale_equity = max(int(my_price_val) - profile_existing_loan, 0)
+            needed_cash = cash_needed if "cash_needed" in dir() else max(target_price_man - calc_loan_limit(target_price_man), 0)
+            total_available = available_cash_man + sale_equity
+            after_move_gap = total_available - needed_cash
             rc1, rc2 = st.columns(2)
             with rc1:
                 with st.container(border=True):
@@ -1290,14 +1434,9 @@ with tab3:
                     diff = target_price_man - my_price_val
                     st.metric("추가 필요 자금 (시세 기준)", man_to_eok_str(int(abs(diff))),
                               delta="상향" if diff > 0 else "하향")
-                    feasible = available_cash_man >= (cash_needed if "cash_needed" in dir() else diff)
+                    feasible = after_move_gap >= 0
                     st.metric("갈아타기 가능 여부", "✅ 가능" if feasible else "❌ 자금 부족")
 
-            profile_existing_loan = int(user_profile.get("existing_loan_man", 0) or 0)
-            sale_equity = max(int(my_price_val) - profile_existing_loan, 0)
-            needed_cash = cash_needed if "cash_needed" in dir() else max(target_price_man - calc_loan_limit(target_price_man), 0)
-            total_available = available_cash_man + sale_equity
-            after_move_gap = total_available - needed_cash
             st.markdown("##### 갈아타기 자금 흐름")
             flow1, flow2, flow3, flow4 = st.columns(4)
             with flow1:
@@ -1319,4 +1458,4 @@ with tab3:
 
 # ── 푸터 ─────────────────────────────────────────────────────────────
 st.markdown("---")
-st.caption("데이터 출처: KB부동산  |  AI 분석 엔진: OpenAI GPT-4o  |  신한은행 AI Intensive 7조")
+st.caption(f"데이터 출처: KB부동산  |  AI 분석 엔진: {OPENAI_CHAT_MODEL_LABEL}  |  신한은행 AI Intensive 7조")

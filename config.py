@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """프로젝트 전역 상수 및 설정."""
 
+import os
 from pathlib import Path
 
 # ── 디렉토리 경로 ────────────────────────────────────────────────────────
@@ -9,6 +10,40 @@ DATA_DIR = BASE_DIR / "data"
 APARTMENT_DATA_DIR = DATA_DIR / "apartment"
 MODELS_DIR = BASE_DIR / "models"
 VECTOR_STORE_DIR = BASE_DIR / "vector_store"
+
+# ── OpenAI ──────────────────────────────────────────────────────────────
+OPENAI_CHAT_MODEL = os.getenv("OPENAI_CHAT_MODEL", "gpt-5.5").strip() or "gpt-5.5"
+OPENAI_CHAT_MODEL_LABEL = f"OpenAI {OPENAI_CHAT_MODEL.upper()}"
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() not in {"0", "false", "no", "off"}
+
+
+def _env_int(name: str, default: int) -> int:
+    try:
+        return int(os.getenv(name, str(default)).strip())
+    except (TypeError, ValueError):
+        return default
+
+
+def _env_float(name: str, default: float) -> float:
+    try:
+        return float(os.getenv(name, str(default)).strip())
+    except (TypeError, ValueError):
+        return default
+
+
+# Low-latency defaults for the Tab 3 RAG advisor.
+OPENAI_USE_RESPONSES_API = _env_bool("OPENAI_USE_RESPONSES_API", True)
+OPENAI_REASONING_EFFORT = os.getenv("OPENAI_REASONING_EFFORT", "low").strip().lower() or "low"
+OPENAI_TEXT_VERBOSITY = os.getenv("OPENAI_TEXT_VERBOSITY", "low").strip().lower() or "low"
+OPENAI_MAX_OUTPUT_TOKENS = _env_int("OPENAI_MAX_OUTPUT_TOKENS", 1400)
+OPENAI_REQUEST_TIMEOUT = _env_float("OPENAI_REQUEST_TIMEOUT", 45.0)
+OPENAI_RAG_RETRIEVER_K = _env_int("OPENAI_RAG_RETRIEVER_K", 3)
 
 # ── CSV 파일 경로 ────────────────────────────────────────────────────────
 KB_DATA_CSV = APARTMENT_DATA_DIR / "kb_apt_seoul_full.csv"

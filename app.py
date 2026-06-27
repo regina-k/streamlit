@@ -8,6 +8,8 @@ UI 오케스트레이터 — 비즈니스 로직은 modules/ 에 위임한다.
 
 import os
 import re
+import hashlib
+import json
 from difflib import SequenceMatcher
 
 import pandas as pd
@@ -219,6 +221,91 @@ def _apply_growth_scores(df: pd.DataFrame, price_column: str | None, score_map: 
 
 def _target_prediction_key(row: pd.Series | dict, price_column: str | None) -> str:
     return _candidate_key(row, price_column)
+
+
+def _clean_context_value(value):
+    if value is None:
+        return None
+    try:
+        if pd.isna(value):
+            return None
+    except (TypeError, ValueError):
+        pass
+    return value.item() if hasattr(value, "item") else value
+
+
+def _area_type_label(row: pd.Series | dict, selected_area_type: str | None = None) -> str | None:
+    for column in ["평형유형", "면적유형", "주택형"]:
+        value = _clean_context_value(row.get(column))
+        if value not in (None, ""):
+            return str(value)
+    if selected_area_type and selected_area_type != "전체":
+        return selected_area_type
+    exclusive_m2 = _clean_context_value(row.get("전용면적(m2)"))
+    if exclusive_m2 is None:
+        return None
+    area = float(exclusive_m2)
+    for label, upper in [("40㎡이하", 40), ("60㎡이하", 60), ("85㎡이하", 85), ("102㎡이하", 102), ("135㎡이하", 135)]:
+        if area <= upper:
+            return label
+    return "135㎡초과"
+
+
+def _build_target_advisor_context(
+    row: pd.Series | dict,
+    price_column: str | None,
+    region_column: str | None,
+    selected_area_type: str | None,
+) -> dict:
+    address_value = _clean_context_value(row.get("지역"))
+    if address_value in (None, "") and region_column:
+        address_value = _clean_context_value(row.get(region_column))
+    return {
+        "name": _clean_context_value(row.get("단지명") or row.get("name")),
+        "address": address_value,
+        "region": _clean_context_value(row.get(region_column)) if region_column else None,
+        "complex_id": _clean_context_value(row.get("단지ID")),
+        "area_serial_no": _clean_context_value(row.get("면적일련번호")),
+        "price_man": _clean_context_value(row.get(price_column)) if price_column else None,
+        "jeonse_price_man": _clean_context_value(row.get("KB전세시세(만원)")),
+        "jeonse_ratio_pct": _clean_context_value(row.get("전세가율")),
+        "area_type": _area_type_label(row, selected_area_type),
+        "supply_area_pyeong": _clean_context_value(row.get("공급면적(평)")),
+        "exclusive_area_pyeong": _clean_context_value(row.get("전용면적(평)")),
+        "units": _clean_context_value(row.get("세대수")),
+        "households_by_size": _clean_context_value(row.get("세대수(평형)")),
+        "completion": _clean_context_value(row.get("준공년월")),
+        "property_type": _clean_context_value(row.get("물건종류")),
+        "floor_area_ratio": _clean_context_value(row.get("용적률")),
+        "building_coverage_ratio": _clean_context_value(row.get("건폐율")),
+        "monthly_sale_change_pct": _clean_context_value(row.get("월간매매변동률")),
+        "monthly_jeonse_change_pct": _clean_context_value(row.get("월간전세변동률")),
+    }
+
+
+def _build_home_advisor_context() -> dict:
+    current_price = int(
+        st.session_state.get("my_current_price", 0)
+        or st.session_state.get("manual_my_current_price_man", 0)
+        or 0
+    )
+    name = str(st.session_state.get("my_name", "") or "").strip()
+    if not name and current_price <= 0:
+        return {}
+    return {
+        "name": name or "직접 입력 보유 주택",
+        "address": st.session_state.get("my_addr"),
+        "current_price": current_price,
+        "purchase_price": my_purchase_price_man,
+        "purchase_date": purchase_date_str,
+        "units": st.session_state.get("my_units"),
+        "completion": st.session_state.get("my_completion"),
+    }
+
+
+def _advisor_context_key(*contexts: dict) -> str:
+    serialized = json.dumps(contexts, ensure_ascii=False, sort_keys=True, default=str)
+    return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
 
 
 def _get_target_horizon_predictions(row: pd.Series | dict, price_column: str | None) -> dict | None:
@@ -616,6 +703,17 @@ with tab1:
             ["_affordable", "자금여유(만원)", price_col],
             ascending=[False, False, True],
         ).drop(columns=["_affordable"])
+
+    st.session_state["apartment_search_context"] = {
+        "region": sel_region if sel_region != "전체" else "전체",
+        "keyword": keyword_filter.strip() or None,
+        "price_min_man": int(price_range[0]),
+        "price_max_man": int(price_range[1]),
+        "units_min": int(units_range[0]),
+        "units_max": int(units_range[1]),
+        "area_type": sel_area_type if sel_area_type != "전체" else "전체",
+        "sort_choice": sort_choice,
+    }
 
     df_filt = df_filt.reset_index(drop=True)
     st.caption(f"🏘️ 검색 결과: **{len(df_filt):,}개** 단지")
@@ -1063,7 +1161,15 @@ with tab3:
             or "선택된 단지"
         )
         target_region    = target_row.get(region_col, "") if region_col else ""
-        target_area_type = target_row.get("평형유형", target_row.get("면적유형", "중형"))
+        search_context = st.session_state.get("apartment_search_context", {})
+        target_area_type = _area_type_label(target_row, search_context.get("area_type")) or "정보 없음"
+        target_advisor_context = _build_target_advisor_context(
+            target_row,
+            price_col,
+            region_col,
+            search_context.get("area_type"),
+        )
+        home_advisor_context = _build_home_advisor_context()
 
         # 탭 2와 동일한 선택 단지·평형 예측 결과를 재사용한다.
         target_horizon_result = None
@@ -1128,7 +1234,15 @@ with tab3:
         annual_income_man = user_profile.get("annual_income_man", 0)
         existing_loan_man = user_profile.get("existing_loan_man", 0)
         available_cash_man = round(user_profile.get("available_cash_eok", 0) * 10000)
-        loan_context = {"loan_limit": 0, "ltv": 0.0, "dsr": 0.0}
+        loan_context = {
+            "loan_limit": 0,
+            "ltv": 0.0,
+            "dsr": 0.0,
+            "cash_needed": 0,
+            "asset_gap": 0,
+            "is_affordable": None,
+            "recommended_products": [],
+        }
 
         if target_price_man > 0:
             try:
@@ -1143,7 +1257,17 @@ with tab3:
                     household_type=user_profile.get("household_type", ""),
                     purpose=user_profile.get("purpose", ""),
                 )
-                loan_context = {"loan_limit": int(loan_limit), "ltv": float(ltv), "dsr": float(dsr)}
+                cash_needed = int(cash_info.get("cash_needed", target_price_man - loan_limit))
+                asset_gap = int(cash_info.get("asset_gap", available_cash_man - cash_needed))
+                loan_context = {
+                    "loan_limit": int(loan_limit),
+                    "ltv": float(ltv),
+                    "dsr": float(dsr),
+                    "cash_needed": cash_needed,
+                    "asset_gap": asset_gap,
+                    "is_affordable": bool(cash_info.get("is_affordable", asset_gap >= 0)),
+                    "recommended_products": loan_products,
+                }
 
                 # 핵심 지표 메트릭
                 dl1, dl2, dl3, dl4 = st.columns(4)
@@ -1156,11 +1280,9 @@ with tab3:
                     dsr_color = "🟢" if dsr <= 40 else ("🟡" if dsr <= 60 else "🔴")
                     st.metric("DSR", f"{dsr_color} {dsr:.1f}%")
                 with dl4:
-                    cash_needed = int(cash_info.get("cash_needed", target_price_man - loan_limit))
                     st.metric("필요 자기자금", man_to_eok_str(cash_needed))
 
                 # 자금 여유/부족 배너
-                asset_gap = available_cash_man - cash_needed
                 if asset_gap >= 0:
                     st.success(f"✅ 현재 자본금으로 매수 가능합니다. 여유 자금: **{man_to_eok_str(int(asset_gap))}**")
                 else:
@@ -1193,6 +1315,20 @@ with tab3:
         # ── AI 어드바이저 응답 ────────────────────────────────────────
         st.subheader("🤖 AI 어드바이저 분석")
 
+        advisor_payload = {
+            "user_profile": user_profile,
+            "target_info": target_advisor_context,
+            "my_info": home_advisor_context,
+            "ml_prediction": target_horizon_result or {},
+            "loan_summary": loan_context,
+            "search_context": search_context,
+        }
+        current_advisor_context_key = _advisor_context_key(advisor_payload)
+        if st.session_state.get("advisor_context_key") != current_advisor_context_key:
+            st.session_state["advisor_context_key"] = current_advisor_context_key
+            st.session_state.pop("ai_advice", None)
+            st.session_state["advisor_messages"] = []
+
         if st.button("🤖 AI 분석 실행", type="primary", use_container_width=True, key="run_ai_btn"):
             if not api_key:
                 st.error("`.env`에 OPENAI_API_KEY를 설정한 뒤 다시 실행해 주세요.")
@@ -1201,20 +1337,7 @@ with tab3:
                     try:
                         advice = get_loan_advice(
                             api_key=api_key,
-                            user_profile=user_profile,
-                            target_info={
-                                "name":         target_name,
-                                "region":       target_region,
-                                "price_man":    target_price_man,
-                                "area_type":    target_area_type,
-                            },
-                            my_info={
-                                "name":           st.session_state.get("my_name", ""),
-                                "current_price":  st.session_state.get("my_current_price", 0) or st.session_state.get("manual_my_current_price_man", 0),
-                                "purchase_price": my_purchase_price_man,
-                                "purchase_date":  purchase_date_str,
-                            },
-                            loan_summary=loan_context,
+                            **advisor_payload,
                         )
                         st.session_state["ai_advice"] = advice
                     except Exception as e:
@@ -1261,20 +1384,7 @@ with tab3:
                 with st.spinner("문서와 현재 조건을 함께 확인하는 중입니다..."):
                     answer = get_loan_advice(
                         api_key=api_key,
-                        user_profile=user_profile,
-                        target_info={
-                            "name":      target_name,
-                            "region":    target_region,
-                            "price_man": target_price_man,
-                            "area_type": target_area_type,
-                        },
-                        my_info={
-                            "name":           st.session_state.get("my_name", ""),
-                            "current_price":  st.session_state.get("my_current_price", 0) or st.session_state.get("manual_my_current_price_man", 0),
-                            "purchase_price": my_purchase_price_man,
-                            "purchase_date":  purchase_date_str,
-                        },
-                        loan_summary=loan_context,
+                        **advisor_payload,
                         question=pending_question,
                     )
             st.session_state["advisor_messages"].append({"role": "assistant", "content": answer})

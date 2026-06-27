@@ -266,7 +266,6 @@ def _format_result_table(df: pd.DataFrame, price_column: str | None) -> pd.DataF
     column_map = [
         ("단지명", "단지명"),
         ("시군구", "지역"),
-        ("동", "동"),
         ("세대수", "세대수"),
         ("공급면적(평)", "공급면적"),
         ("전용면적(평)", "전용면적"),
@@ -420,7 +419,8 @@ with tab1:
 
     # ── 필터 UI ──────────────────────────────────────────────────────
     with st.container():
-        f_col1, f_col2, f_col3 = st.columns(3)
+        f_col1, f_col3 = st.columns(2)
+        sel_dong = "전체"
 
         with f_col1:
             if region_col and df_all is not None:
@@ -429,18 +429,6 @@ with tab1:
             else:
                 sel_region = "전체"
                 st.selectbox("지역 (시군구)", ["전체"], key="filter_region")
-
-        with f_col2:
-            # 선택된 지역에 따라 동 필터 동적 갱신
-            if dong_col and df_all is not None:
-                if sel_region != "전체" and region_col:
-                    dong_src = df_all[df_all[region_col] == sel_region]
-                else:
-                    dong_src = df_all
-                dong_options = ["전체"] + sorted(dong_src[dong_col].dropna().unique().tolist())
-            else:
-                dong_options = ["전체"]
-            sel_dong = st.selectbox("동", dong_options, key="filter_dong")
 
         with f_col3:
             keyword_filter = st.text_input("단지명 검색", placeholder="예: 래미안", key="filter_keyword")

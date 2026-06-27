@@ -90,6 +90,11 @@ python -m py_compile .\scripts\compare_hierarchical_apt_size_shrinkage.py .\scri
 버전별 성능과 판단 근거는 아래 문서를 먼저 확인한다.
 
 ```text
+streamlit/ml_model/docs/presentation_model_evolution.md
+streamlit/ml_model/docs/presentation_expected_questions.md
+streamlit/ml_model/docs/ppt_two_slide_model_brief.md
+streamlit/ml_model/docs/presentation_five_minute_script.md
+streamlit/ml_model/docs/ai_pdf_ml_data_review.md
 streamlit/ml_model/outputs/performance/VERSION_LOG.md
 streamlit/ml_model/outputs/performance/ver06222256_ver16_hierarchical_apt_size_shrinkage.md
 ```

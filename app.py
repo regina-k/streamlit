@@ -19,7 +19,12 @@ try:
 except ImportError:
     pass
 
-from config import HOUSEHOLD_TYPES, PURPOSE_OPTIONS, AREA_TYPES
+from config import (
+    AREA_TYPES,
+    HOUSEHOLD_TYPES,
+    OPENAI_CHAT_MODEL_LABEL,
+    PURPOSE_OPTIONS,
+)
 from modules.kb_api import fetch_search_suggestions, fetch_complex_id, fetch_complex_price
 from modules.data_loader import load_kb_apt_data, load_ml_timeseries, filter_apartments
 from modules.utils import format_price_kor, man_to_eok_str
@@ -30,7 +35,7 @@ from modules.loan_calculator import (
     calc_cash_needed,
     recommend_loan_products,
 )
-from modules.ml_predictor import predict_apartment_growth_horizons, predict_price_growth
+from modules.ml_predictor import predict_apartment_growth_horizons
 from modules.rag_advisor import get_loan_advice
 
 # ── 페이지 설정 ──────────────────────────────────────────────────────────
@@ -372,7 +377,7 @@ with tab1:
     # ── 서비스 이용 가이드 ───────────────────────────────────────────
     with st.expander("📖 서비스 이용 가이드", expanded=False):
         st.markdown(
-            """
+            f"""
             **이 서비스를 사용하는 방법**
 
             1. **Tab 1 (투자 프로파일)**에서 가구 형태, 소득, 자본금 등을 입력하고 저장하세요.
@@ -381,7 +386,7 @@ with tab1:
             4. 원하는 단지를 클릭하면 자동으로 **대출 규제·자금 분석**이 수행됩니다.
             5. **Tab 3 (AI 종합 분석)**에서 ML 가격 예측과 AI 어드바이저 분석을 확인하세요.
 
-            > 💡 **데이터 출처:** KB부동산 시세 / **AI 엔진:** OpenAI GPT-4o
+            > 💡 **데이터 출처:** KB부동산 시세 / **AI 엔진:** {OPENAI_CHAT_MODEL_LABEL}
             """
         )
 
@@ -1060,13 +1065,25 @@ with tab3:
         target_region    = target_row.get(region_col, "") if region_col else ""
         target_area_type = target_row.get("평형유형", target_row.get("면적유형", "중형"))
 
-        # ── STUB 상태 배너 ───────────────────────────────────────────
+        # 탭 2와 동일한 선택 단지·평형 예측 결과를 재사용한다.
+        target_horizon_result = None
+        target_prediction_error = None
         try:
-            stub_check = predict_price_growth(target_region, target_area_type, "1yr")
-            if str(stub_check.get("model_version", "")).upper().startswith("STUB"):
+            target_horizon_result = _get_target_horizon_predictions(target_row, price_col)
+            if str((target_horizon_result or {}).get("model_version", "")).upper().startswith("STUB"):
                 st.warning("⚠️ ML 모델 분석 준비 중 — 더미 데이터가 표시됩니다.")
-        except Exception:
-            st.warning("⚠️ ML 예측 모듈을 초기화할 수 없습니다. 더미 데이터가 표시될 수 있습니다.")
+        except Exception as exc:
+            target_prediction_error = str(exc)
+            st.warning("⚠️ 선택 단지의 ML 예측을 불러오지 못했습니다.")
+
+        predictions_by_month = {
+            int(pred.get("horizon_months", 0)): pred
+            for pred in (target_horizon_result or {}).get("predictions", [])
+        }
+        target_model_ver = _display_text(
+            (target_horizon_result or {}).get("model_version"),
+            "모델 확인 필요",
+        )
 
         st.markdown("---")
 
@@ -1075,15 +1092,18 @@ with tab3:
         st.caption(f"대상 지역: **{target_region}** / 평형 유형: **{target_area_type}**")
 
         ml_col1, ml_col2, ml_col3 = st.columns(3)
-        ml_periods = [("1yr", "1년 후", ml_col1), ("3yr", "3년 후", ml_col2), ("5yr", "5년 후", ml_col3)]
+        ml_periods = [(12, "1년 후", ml_col1), (36, "3년 후", ml_col2), (60, "5년 후", ml_col3)]
 
-        for period_key, period_label, col in ml_periods:
+        for horizon_months, period_label, col in ml_periods:
             with col:
                 try:
-                    pred = predict_price_growth(target_region, target_area_type, period_key)
+                    if target_prediction_error:
+                        raise RuntimeError(target_prediction_error)
+                    pred = predictions_by_month.get(horizon_months)
+                    if pred is None:
+                        raise ValueError(f"{horizon_months}개월 예측 결과가 없습니다.")
                     growth_pct   = pred.get("predicted_growth_pct", 0)
                     confidence   = _confidence_label(pred.get("confidence"))
-                    model_ver    = _display_text(pred.get("model_version"), "모델 확인 필요")
                     est_price    = int(target_price_man * (1 + growth_pct / 100))
 
                     with st.container(border=True):
@@ -1094,7 +1114,7 @@ with tab3:
                             delta_color="normal" if growth_pct >= 0 else "inverse",
                         )
                         st.metric("추정 시세", man_to_eok_str(est_price))
-                        st.caption(f"신뢰도: {confidence}  |  모델: {model_ver}")
+                        st.caption(f"신뢰도: {confidence}  |  모델: {target_model_ver}")
                 except Exception as e:
                     with st.container(border=True):
                         st.markdown(f"**{period_label} 예측**")
@@ -1319,4 +1339,4 @@ with tab3:
 
 # ── 푸터 ─────────────────────────────────────────────────────────────
 st.markdown("---")
-st.caption("데이터 출처: KB부동산  |  AI 분석 엔진: OpenAI GPT-4o  |  신한은행 AI Intensive 7조")
+st.caption(f"데이터 출처: KB부동산  |  AI 분석 엔진: {OPENAI_CHAT_MODEL_LABEL}  |  신한은행 AI Intensive 7조")

@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """프로젝트 전역 상수 및 설정."""
 
+import os
 from pathlib import Path
 
 # ── 디렉토리 경로 ────────────────────────────────────────────────────────
@@ -9,6 +10,10 @@ DATA_DIR = BASE_DIR / "data"
 APARTMENT_DATA_DIR = DATA_DIR / "apartment"
 MODELS_DIR = BASE_DIR / "models"
 VECTOR_STORE_DIR = BASE_DIR / "vector_store"
+
+# ── OpenAI ──────────────────────────────────────────────────────────────
+OPENAI_CHAT_MODEL = os.getenv("OPENAI_CHAT_MODEL", "gpt-5.5").strip() or "gpt-5.5"
+OPENAI_CHAT_MODEL_LABEL = f"OpenAI {OPENAI_CHAT_MODEL.upper()}"
 
 # ── CSV 파일 경로 ────────────────────────────────────────────────────────
 KB_DATA_CSV = APARTMENT_DATA_DIR / "kb_apt_seoul_full.csv"

@@ -11,6 +11,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 VECTORSTORE_PATH = str(Path("vector_store/shinhan_faiss"))
+CHAT_MODEL = os.getenv("OPENAI_CHAT_MODEL", "gpt-5.5").strip() or "gpt-5.5"
 
 
 def load_retriever():
@@ -32,7 +33,7 @@ def build_chain(retriever):
     from langchain_core.output_parsers import StrOutputParser
     from langchain_core.runnables import RunnablePassthrough
 
-    llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
+    llm = ChatOpenAI(model=CHAT_MODEL)
 
     prompt = ChatPromptTemplate.from_template("""
 당신은 신한은행 주택담보대출 전문 상담사입니다.

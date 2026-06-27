@@ -9,7 +9,7 @@ LangChain RAG 기반 AI 어드바이저 모듈. (김동하 담당)
 import os
 from pathlib import Path
 
-from config import VECTOR_STORE_DIR
+from config import OPENAI_CHAT_MODEL, VECTOR_STORE_DIR
 
 VECTORSTORE_PATH = str(VECTOR_STORE_DIR / "shinhan_faiss")
 
@@ -87,7 +87,7 @@ def _stub_gpt_response(
 ) -> str:
     """STUB: RAG 완성 전 GPT 직접 호출 임시 구현.
 
-    기존 app.py의 GPT-4o 호출 로직을 이관한 함수.
+    기존 app.py의 OpenAI 호출 로직을 이관한 함수.
     get_loan_advice()가 RAG로 교체되면 이 함수는 삭제한다.
 
     Args:
@@ -96,7 +96,7 @@ def _stub_gpt_response(
         ml_prediction: get_loan_advice()의 ml_prediction과 동일.
 
     Returns:
-        GPT-4o가 생성한 마크다운 리포트 문자열.
+        OpenAI 모델이 생성한 마크다운 리포트 문자열.
     """
     # TODO (김동하): app.py의 system_prompt / user_prompt 구성 로직 이관
     # TODO (김동하): OpenAI(api_key=...).chat.completions.create() 호출
@@ -131,7 +131,7 @@ def _build_rag_chain(retriever):
     from langchain_core.output_parsers import StrOutputParser
     from langchain_core.runnables import RunnablePassthrough
 
-    llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.3)
+    llm = ChatOpenAI(model=OPENAI_CHAT_MODEL)
 
     prompt = ChatPromptTemplate.from_template("""
 당신은 신한은행 주택담보대출 전문 AI 어드바이저입니다.

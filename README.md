@@ -40,7 +40,10 @@ python -m pip install -r requirements.txt
 
 ```text
 OPENAI_API_KEY=...
+OPENAI_CHAT_MODEL=gpt-5.5
 ```
+
+`OPENAI_CHAT_MODEL`을 생략해도 기본값은 `gpt-5.5`이다.
 
 `final/.env`에는 데이터 전처리 API 호출에 필요한 값을 둔다.
 

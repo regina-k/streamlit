@@ -324,6 +324,9 @@ def _normalize_loan_summary(summary: dict) -> dict:
         "dsr": _number(summary.get("dsr")),
         "cash_needed": _integer(summary.get("cash_needed")),
         "asset_gap": _integer(summary.get("asset_gap")),
+        "available_cash": _integer(summary.get("available_cash")),
+        "home_sale_equity": _integer(summary.get("home_sale_equity")),
+        "total_available": _integer(summary.get("total_available")),
         "is_affordable": summary.get("is_affordable"),
         "recommended_products": products,
     }
@@ -430,6 +433,7 @@ def _build_query(
 - LTV/DSR: {loan_summary.get('ltv', 0):.1f}% / {loan_summary.get('dsr', 0):.1f}%
 - 필요 자기자금: {_money(loan_summary.get('cash_needed'), zero_means_none=True)}
 - 가용 자본금 대비 잔여/부족: {_money(loan_summary.get('asset_gap'))} ({affordability_text})
+- 기존 가용자금/보유주택 매도 후 자기자본/총 동원 가능 자금: {_money(loan_summary.get('available_cash'))} / {_money(loan_summary.get('home_sale_equity'))} / {_money(loan_summary.get('total_available'))}
 {_product_lines(loan_summary)}
 
 위 값들을 실제 근거로 인용하여 이 고객에게 맞춤형 대출·투자 분석 리포트를 작성해주세요.

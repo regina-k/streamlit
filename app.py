@@ -1234,6 +1234,9 @@ with tab3:
         annual_income_man = user_profile.get("annual_income_man", 0)
         existing_loan_man = user_profile.get("existing_loan_man", 0)
         available_cash_man = round(user_profile.get("available_cash_eok", 0) * 10000)
+        home_price_man = int(home_advisor_context.get("current_price", 0) or 0)
+        home_sale_equity_man = max(home_price_man - int(existing_loan_man or 0), 0) if home_price_man > 0 else 0
+        total_purchase_funds_man = available_cash_man + home_sale_equity_man
         loan_context = {
             "loan_limit": 0,
             "ltv": 0.0,
@@ -1241,6 +1244,9 @@ with tab3:
             "cash_needed": 0,
             "asset_gap": 0,
             "is_affordable": None,
+            "available_cash": int(available_cash_man),
+            "home_sale_equity": int(home_sale_equity_man),
+            "total_available": int(total_purchase_funds_man),
             "recommended_products": [],
         }
 
@@ -1249,7 +1255,7 @@ with tab3:
                 loan_limit    = calc_loan_limit(target_price_man)
                 ltv           = calc_ltv(target_price_man, loan_limit)
                 dsr           = calc_dsr(loan_limit, annual_income_man, existing_loan_man)
-                cash_info     = calc_cash_needed(target_price_man, loan_limit, available_cash_man)
+                cash_info     = calc_cash_needed(target_price_man, loan_limit, total_purchase_funds_man)
                 loan_products = recommend_loan_products(
                     price=target_price_man,
                     loan_limit=loan_limit,
@@ -1266,6 +1272,9 @@ with tab3:
                     "cash_needed": cash_needed,
                     "asset_gap": asset_gap,
                     "is_affordable": bool(cash_info.get("is_affordable", asset_gap >= 0)),
+                    "available_cash": int(available_cash_man),
+                    "home_sale_equity": int(home_sale_equity_man),
+                    "total_available": int(total_purchase_funds_man),
                     "recommended_products": loan_products,
                 }
 
@@ -1400,6 +1409,11 @@ with tab3:
         my_price_val   = st.session_state.get("my_current_price", 0) or st.session_state.get("manual_my_current_price_man", 0)
 
         if my_price_val and target_price_man:
+            profile_existing_loan = int(user_profile.get("existing_loan_man", 0) or 0)
+            sale_equity = max(int(my_price_val) - profile_existing_loan, 0)
+            needed_cash = cash_needed if "cash_needed" in dir() else max(target_price_man - calc_loan_limit(target_price_man), 0)
+            total_available = available_cash_man + sale_equity
+            after_move_gap = total_available - needed_cash
             rc1, rc2 = st.columns(2)
             with rc1:
                 with st.container(border=True):
@@ -1420,14 +1434,9 @@ with tab3:
                     diff = target_price_man - my_price_val
                     st.metric("추가 필요 자금 (시세 기준)", man_to_eok_str(int(abs(diff))),
                               delta="상향" if diff > 0 else "하향")
-                    feasible = available_cash_man >= (cash_needed if "cash_needed" in dir() else diff)
+                    feasible = after_move_gap >= 0
                     st.metric("갈아타기 가능 여부", "✅ 가능" if feasible else "❌ 자금 부족")
 
-            profile_existing_loan = int(user_profile.get("existing_loan_man", 0) or 0)
-            sale_equity = max(int(my_price_val) - profile_existing_loan, 0)
-            needed_cash = cash_needed if "cash_needed" in dir() else max(target_price_man - calc_loan_limit(target_price_man), 0)
-            total_available = available_cash_man + sale_equity
-            after_move_gap = total_available - needed_cash
             st.markdown("##### 갈아타기 자금 흐름")
             flow1, flow2, flow3, flow4 = st.columns(4)
             with flow1:

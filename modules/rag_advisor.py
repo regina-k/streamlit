@@ -4,7 +4,16 @@ import os
 from pathlib import Path
 from typing import Any
 
-from config import OPENAI_CHAT_MODEL, VECTOR_STORE_DIR
+from config import (
+    OPENAI_CHAT_MODEL,
+    OPENAI_MAX_OUTPUT_TOKENS,
+    OPENAI_RAG_RETRIEVER_K,
+    OPENAI_REASONING_EFFORT,
+    OPENAI_REQUEST_TIMEOUT,
+    OPENAI_TEXT_VERBOSITY,
+    OPENAI_USE_RESPONSES_API,
+    VECTOR_STORE_DIR,
+)
 
 VECTORSTORE_PATH = str(VECTOR_STORE_DIR / "shinhan_faiss")
 
@@ -97,7 +106,7 @@ def init_vector_store(docs_path: str | None = None):
 
     embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
     vectorstore = FAISS.load_local(path, embeddings, allow_dangerous_deserialization=True)
-    return vectorstore.as_retriever(search_kwargs={"k": 5})
+    return vectorstore.as_retriever(search_kwargs={"k": OPENAI_RAG_RETRIEVER_K})
 
 
 def _build_rag_chain(retriever):
@@ -106,7 +115,14 @@ def _build_rag_chain(retriever):
     from langchain_core.output_parsers import StrOutputParser
     from langchain_core.runnables import RunnablePassthrough
 
-    llm = ChatOpenAI(model=OPENAI_CHAT_MODEL)
+    llm = ChatOpenAI(
+        model=OPENAI_CHAT_MODEL,
+        use_responses_api=OPENAI_USE_RESPONSES_API,
+        reasoning_effort=OPENAI_REASONING_EFFORT,
+        verbosity=OPENAI_TEXT_VERBOSITY,
+        max_tokens=OPENAI_MAX_OUTPUT_TOKENS,
+        request_timeout=OPENAI_REQUEST_TIMEOUT,
+    )
 
     prompt = ChatPromptTemplate.from_template("""
 당신은 신한은행 주택담보대출 전문 AI 어드바이저입니다.

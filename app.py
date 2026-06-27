@@ -266,7 +266,6 @@ def _format_result_table(df: pd.DataFrame, price_column: str | None) -> pd.DataF
     column_map = [
         ("단지명", "단지명"),
         ("시군구", "지역"),
-        ("동", "동"),
         ("세대수", "세대수"),
         ("공급면적(평)", "공급면적"),
         ("전용면적(평)", "전용면적"),
@@ -420,7 +419,8 @@ with tab1:
 
     # ── 필터 UI ──────────────────────────────────────────────────────
     with st.container():
-        f_col1, f_col2, f_col3 = st.columns(3)
+        f_col1, f_col3 = st.columns(2)
+        sel_dong = "전체"
 
         with f_col1:
             if region_col and df_all is not None:
@@ -430,25 +430,13 @@ with tab1:
                 sel_region = "전체"
                 st.selectbox("지역 (시군구)", ["전체"], key="filter_region")
 
-        with f_col2:
-            # 선택된 지역에 따라 동 필터 동적 갱신
-            if dong_col and df_all is not None:
-                if sel_region != "전체" and region_col:
-                    dong_src = df_all[df_all[region_col] == sel_region]
-                else:
-                    dong_src = df_all
-                dong_options = ["전체"] + sorted(dong_src[dong_col].dropna().unique().tolist())
-            else:
-                dong_options = ["전체"]
-            sel_dong = st.selectbox("동", dong_options, key="filter_dong")
-
         with f_col3:
             keyword_filter = st.text_input("단지명 검색", placeholder="예: 래미안", key="filter_keyword")
 
         f_col4, f_col5, f_col6 = st.columns(3)
 
         with f_col4:
-            # 시세 범위 슬라이더
+            # 시세 범위 슬라이더 (억 단위, 천만원 step)
             if price_col and df_all is not None:
                 valid_price_values = _positive_numeric_series(df_all, price_col)
                 if valid_price_values.empty:
@@ -456,31 +444,50 @@ with tab1:
                 else:
                     price_min_raw = int(valid_price_values.min())
                     price_max_raw = int(valid_price_values.max())
-                price_range = st.slider(
-                    "시세 범위 (만 원)",
-                    min_value=price_min_raw,
-                    max_value=price_max_raw,
-                    value=(price_min_raw, price_max_raw),
-                    step=100,
-                    format="%d만",
+                price_min_eok = round(price_min_raw / 10000, 1)
+                price_max_eok = round(price_max_raw / 10000, 1)
+                price_range_eok = st.slider(
+                    "시세 범위 (억 원)",
+                    min_value=price_min_eok,
+                    max_value=price_max_eok,
+                    value=(price_min_eok, price_max_eok),
+                    step=0.1,
+                    format="%.1f억",
                     key="filter_price_range",
                 )
+                price_range = (round(price_range_eok[0] * 10000), round(price_range_eok[1] * 10000))
+                st.caption(f"{price_range[0]:,} ~ {price_range[1]:,} 만원")
             else:
                 price_range = (0, 999_999_999)
 
         with f_col5:
-            # 세대수 범위
+            # 세대수 범위 (최소/최대 직접 입력)
             if units_col and df_all is not None:
                 units_min_raw = int(df_all[units_col].dropna().min())
                 units_max_raw = int(df_all[units_col].dropna().max())
-                units_range = st.slider(
-                    "세대수 범위",
-                    min_value=units_min_raw,
-                    max_value=units_max_raw,
-                    value=(units_min_raw, units_max_raw),
-                    step=1,
-                    key="filter_units_range",
-                )
+                u_col1, u_col2 = st.columns(2)
+                with u_col1:
+                    units_min = st.number_input(
+                        "세대수 최소",
+                        min_value=units_min_raw,
+                        max_value=units_max_raw,
+                        value=units_min_raw,
+                        step=100,
+                        format="%d",
+                        key="filter_units_min",
+                    )
+                with u_col2:
+                    units_max = st.number_input(
+                        "세대수 최대",
+                        min_value=units_min_raw,
+                        max_value=units_max_raw,
+                        value=units_max_raw,
+                        step=100,
+                        format="%d",
+                        key="filter_units_max",
+                    )
+                units_range = (units_min, units_max)
+                st.caption(f"{units_min:,} ~ {units_max:,} 세대")
             else:
                 units_range = (0, 99_999)
 
@@ -535,7 +542,7 @@ with tab1:
     with score_col1:
         score_requested = st.button(
             "AI 상승률 계산",
-            width="stretch",
+            use_container_width=True,
             key="score_candidate_growth",
             disabled=not score_ready,
         )
@@ -572,11 +579,12 @@ with tab1:
         if show_scored_only:
             df_filt = df_filt[df_filt["AI예측상승률(1년)"].notna()].copy()
 
-    sort_options = ["추천순", "AI예측(1년) 높은 순", "이름이 비슷한 순", "필요자기자금 낮은 순", "매매시세 낮은 순", "매매시세 높은 순", "월간매매변동률 높은 순"]
-    sort_choice = st.segmented_control(
+    sort_options = ["AI예측(1년) 높은 순", "이름이 비슷한 순", "필요자기자금 낮은 순", "매매시세 낮은 순", "매매시세 높은 순", "월간매매변동률 높은 순"]
+    sort_choice = st.radio(
         "정렬 기준",
         options=sort_options,
-        default="추천순",
+        index=0,
+        horizontal=True,
         key="result_sort_order",
     )
     if sort_choice == "필요자기자금 낮은 순" and "필요자기자금(만원)" in df_filt.columns:
@@ -612,7 +620,7 @@ with tab1:
         display_df = _format_result_table(df_filt, price_col)
         event = st.dataframe(
             display_df.drop(columns=["_row_id"], errors="ignore"),
-            width="stretch",
+            use_container_width=True,
             height=320,
             on_select="rerun",
             selection_mode="single-row",
@@ -739,7 +747,7 @@ with tab1:
                             st.line_chart(
                                 ts_slice.set_index("기준월")[chart_cols],
                                 height=260,
-                                width="stretch",
+                                use_container_width=True,
                             )
                     else:
                         st.info("선택한 평형의 시계열 데이터는 아직 연결되지 않았습니다.")
@@ -827,7 +835,7 @@ with tab2:
                 sel_label = st.selectbox("검색된 단지 선택", options=labels, key="complex_select")
                 sel_item = next((s for s in suggestions if s["label"] == sel_label), None)
 
-                if st.button("✅ 이 단지로 확정", width="stretch"):
+                if st.button("✅ 이 단지로 확정", use_container_width=True):
                     if sel_item:
                         try:
                             with st.spinner("KB부동산에서 단지 정보를 가져오는 중..."):
@@ -951,16 +959,18 @@ with tab2:
             key="profile_purpose",
             horizontal=True,
         )
-        existing_loan_man = st.number_input(
-            "현재 보유 대출 (만 원)",
-            min_value=0,
-            max_value=500_000,
-            value=int(saved_profile.get("existing_loan_man", 0)),
-            step=500,
-            format="%d",
+        existing_loan_eok = st.number_input(
+            "현재 보유 대출 (억 원)",
+            min_value=0.0,
+            max_value=50.0,
+            value=round(float(saved_profile.get("existing_loan_man", 0)) / 10000, 1),
+            step=0.1,
+            format="%.1f",
             key="profile_existing_loan",
             help="주택담보대출, 신용대출 등 현재 상환 중인 모든 대출의 잔액 합계",
         )
+        existing_loan_man = round(existing_loan_eok * 10000)
+        st.caption(f"= {existing_loan_man:,} 만원")
 
     with col_b:
         st.markdown("##### 자산 · 소득 정보")
@@ -974,16 +984,18 @@ with tab2:
             key="profile_cash",
             help="현금, 예금, 주식 등 즉시 동원 가능한 자산 (현재 주택 매도 차익 포함 가능)",
         )
-        annual_income_man = st.number_input(
-            "부부합산 연소득 (만 원)",
+        annual_income_chunman = st.number_input(
+            "부부합산 연소득 (천만 원)",
             min_value=0,
-            max_value=100_000,
-            value=int(saved_profile.get("annual_income_man", 8_000)),
-            step=100,
+            max_value=100,
+            value=int(saved_profile.get("annual_income_man", 8_000)) // 1000,
+            step=1,
             format="%d",
             key="profile_income",
             help="세전 기준. 배우자 소득 합산 가능",
         )
+        annual_income_man = annual_income_chunman * 1000
+        st.caption(f"= {annual_income_man:,} 만원")
 
         # DSR 미리보기 (실시간)
         target_row_preview = st.session_state.get("selected_target_row")
@@ -1001,7 +1013,7 @@ with tab2:
     st.markdown("---")
 
     # ── 저장 버튼 ─────────────────────────────────────────────────
-    if st.button("💾 프로파일 저장", type="primary", width="stretch"):
+    if st.button("💾 프로파일 저장", type="primary", use_container_width=True):
         st.session_state["user_profile"] = {
             "household_type":     household_type,
             "purpose":            purpose,
@@ -1149,7 +1161,7 @@ with tab3:
                                 st.metric("한도", man_to_eok_str(int(prod.get("limit", 0))) if prod.get("limit") else "상담 필요")
                             with p4:
                                 if prod.get("url"):
-                                    st.link_button("상세보기", prod["url"], width="stretch")
+                                    st.link_button("상세보기", prod["url"], use_container_width=True)
 
             except Exception as e:
                 st.error(f"대출 분석 중 오류가 발생했습니다: {e}")
@@ -1161,7 +1173,7 @@ with tab3:
         # ── AI 어드바이저 응답 ────────────────────────────────────────
         st.subheader("🤖 AI 어드바이저 분석")
 
-        if st.button("🤖 AI 분석 실행", type="primary", width="stretch", key="run_ai_btn"):
+        if st.button("🤖 AI 분석 실행", type="primary", use_container_width=True, key="run_ai_btn"):
             if not api_key:
                 st.error("`.env`에 OPENAI_API_KEY를 설정한 뒤 다시 실행해 주세요.")
             else:
@@ -1198,17 +1210,19 @@ with tab3:
         if "advisor_messages" not in st.session_state:
             st.session_state["advisor_messages"] = []
 
-        quick_question = st.pills(
+        quick_question = st.selectbox(
             "빠른 질문",
             options=[
+                "",
                 "이 조건에서 가장 먼저 확인할 대출 리스크는?",
                 "자금 부족을 줄이는 방법을 알려줘",
                 "신혼부부가 확인할 만한 상품은?",
                 "DSR 관점에서 조심할 점은?",
             ],
+            index=0,
             key="advisor_quick_question",
-        )
-        send_quick = st.button("선택한 질문 보내기", width="stretch", key="send_quick_question")
+        ) or None
+        send_quick = st.button("선택한 질문 보내기", use_container_width=True, key="send_quick_question")
         typed_question = st.chat_input("대출 규제나 상품에 대해 질문해 보세요")
         pending_question = typed_question or (quick_question if send_quick and quick_question else "")
 
